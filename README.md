@@ -185,3 +185,9 @@ make test-ch     # 事件存 ClickHouse：CH_URL=clickhouse://default:<密码>@1
 ```
 
 > 仅扫描你有权管理的网络。
+
+## 许可证
+
+[Apache License 2.0](LICENSE)
+
+> 本项目用于防护你有权管理的网络。扫描、弱口令检测等功能请仅在获得授权的范围内使用。
