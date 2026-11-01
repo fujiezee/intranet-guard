@@ -29,6 +29,10 @@ wait_for() {
 	ok "$1（${i} 秒）"
 }
 
+step "环境"
+echo "    $(. /etc/os-release && echo "$PRETTY_NAME")，内核 $(uname -r)"
+echo "    sleep：$(readlink -f "$(command -v sleep)")（$(ls -l "$(readlink -f "$(command -v sleep)")" | awk '{print $5}') 字节）"
+
 step "一键安装管理中心"
 OUT=$("$BUNDLE/install.sh" 2>&1) || { echo "$OUT"; fail "install.sh 失败"; }
 echo "$OUT" | sed 's/^/    /'

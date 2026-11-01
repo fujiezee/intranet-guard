@@ -94,15 +94,27 @@ func simProcess(id string) (string, error) {
 		return "", err
 	}
 	cmd := exec.Command(dst, fmt.Sprint(int(simDuration.Seconds())))
+	// 进程名保持 sleep：uutils / BusyBox 这类多合一程序按 argv[0] 决定执行哪个命令，
+	// 改名后会直接报错退出。可执行文件路径仍是 /tmp/safe-sim-<编号>，检测看到的是这个路径。
+	cmd.Args[0] = filepath.Base(src)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		os.Remove(dst)
 		return simTmpDir + " 不允许执行程序（noexec 挂载？）", nil
 	}
+	exited := make(chan error, 1)
 	go func() {
-		cmd.Wait()
+		exited <- cmd.Wait()
 		os.Remove(dst)
 	}()
-	return "", nil
+	// 确认进程确实在运行：立即退出的话自检必然失败，直接报告原因，而不是让它看起来像检测失效
+	select {
+	case err := <-exited:
+		return "", fmt.Errorf("测试程序启动后立即退出（%v）：%s", err, strings.TrimSpace(stderr.String()))
+	case <-time.After(500 * time.Millisecond):
+		return "", nil
+	}
 }
 
 // simHoneypot 连接蜜罐并发送自检标记。
