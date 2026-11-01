@@ -19,7 +19,13 @@ PW=ha-admin-password
 
 step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok() { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %s\n' "$*"; }
-fail() { printf '  \033[31m✗\033[0m %s\n' "$*"; tail -20 "$W"/a.log "$W"/b.log 2>/dev/null; exit 1; }
+fail() {
+	printf '  \033[31m✗\033[0m %s\n' "$*"
+	for f in "$W/a.log" "$W/b.log" "$W/loadtest.log"; do
+		[ -f "$f" ] && { echo "--- $(basename "$f")（最后 20 行）"; tail -20 "$f"; }
+	done
+	exit 1
+}
 json() { python3 -c "import sys,json;d=json.load(sys.stdin);print($1)"; }
 secs() { echo "${1%s}"; }
 wait_for() {
@@ -49,10 +55,10 @@ echo "    模拟 Agent ${AGENTS} 个，上报周期 ${INTERVAL}，每次平均 $
 
 step "启动两个管理中心实例"
 start_instance a 18080 18443
-wait_for "实例 A 启动" 60 "curl -fs -o /dev/null http://127.0.0.1:18080/"
+wait_for "实例 A 启动" 60 "curl -s -o /dev/null http://127.0.0.1:18080/api/v1/auth/me" # 收到任何 HTTP 响应即已启动
 wait_for "实例 A 成为主实例（执行后台任务）" 15 "grep -q 'became leader' $W/a.log"
 start_instance b 18081 18444 # 与 A 共用 CA 和服务端私钥（同一个 pki 目录；实际部署时复制到各实例）
-wait_for "实例 B 启动" 60 "curl -fs -o /dev/null http://127.0.0.1:18081/"
+wait_for "实例 B 启动" 60 "curl -s -o /dev/null http://127.0.0.1:18081/api/v1/auth/me"
 sleep 8
 grep -q 'became leader' "$W/b.log" && fail "两个实例同时成为主实例" || ok "实例 B 为备用（不执行后台任务）"
 
