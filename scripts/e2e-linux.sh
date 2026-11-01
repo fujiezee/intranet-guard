@@ -60,7 +60,8 @@ TOKEN=$(curl -fsSk -X POST "$CONSOLE/api/v1/auth/login" -d "{\"username\":\"admi
 PIN=$(api GET /install-info | json 'd["pin"]')
 
 step "一行命令安装 Agent 和探针"
-# CI 机器上没有 Suricata：预先建好 eve.json，安装脚本会让探针读取它，之后写入按 Suricata 格式构造的记录
+# 预先建好 eve.json，安装脚本会让探针读取它：先写入按 Suricata 格式构造的记录（心跳等需要长时间的场景），
+# 之后再启动真实的 Suricata 写入同一文件
 mkdir -p /var/log/suricata && : >/var/log/suricata/eve.json
 mkdir -p /var/www/html # 让 Webshell 监控和自检有网站目录可用
 AT=$(api POST /enroll-tokens '{"kind":"agent","max_uses":1,"ttl_hours":1}' | json 'd["token"]')
@@ -117,19 +118,47 @@ wait_for "固定间隔连接 → C2 心跳告警（探针每分钟评估一次�
 wait_for "情报命中归入“命令控制”阶段的事件" 10 \
 	"api GET /incidents | json '[i for i in d if i[\"ip\"]==\"10.9.0.5\" and \"c2\" in i[\"stages\"]][0]'"
 
+step "威胁情报（真实 Suricata 抓包）"
+# 在出口网卡上运行软件源中的 Suricata，与探针共用同一个 eve.json：验证真实输出格式能被解析、真实流量能被检出。
+# 临时把 Cloudflare 的公共 DNS（无害、稳定可达）作为情报，再真实访问它。DNS 与 TLS 用不同域名：
+# 同一主机对同一域名的多次命中会去重成一条告警，同一个域名无法分别验证两条路径。
+IFACE=$(ip route show default | awk '{print $5; exit}')
+DEBIAN_FRONTEND=noninteractive apt-get install -y -qq suricata >/dev/null 2>&1 ||
+	{ apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq suricata >/dev/null; }
+systemctl stop suricata 2>/dev/null || true # 软件包自带的服务：停掉，改用下面明确指定网卡和参数的进程
+# -k none：云主机网卡有校验和卸载，抓到的出站包校验和尚未计算，不关闭校验会丢弃这些流
+suricata -D -i "$IFACE" -k none -l /var/log/suricata --pidfile /run/safe-e2e-suricata.pid >/var/log/safe-e2e-suricata.log 2>&1
+echo "    $(suricata -V 2>&1 | head -1)，网卡 $IFACE"
+sleep 3
+[ -s /run/safe-e2e-suricata.pid ] && kill -0 "$(cat /run/safe-e2e-suricata.pid)" 2>/dev/null ||
+	{ cat /var/log/safe-e2e-suricata.log /var/log/suricata/suricata.log 2>/dev/null | tail -30; fail "Suricata 未能启动"; }
+# flow_id 只出现在 Suricata 自己输出的记录里（上面构造的记录没有）
+wait_for "Suricata 开始写入 eve.json" 60 "grep -q '\"flow_id\"' /var/log/suricata/eve.json"
+api POST /intel/indicators '{"text":"one.one.one.one\ncloudflare-dns.com\n1.1.1.1","severity":"medium","note":"e2e 真实抓包"}' >/dev/null
+wait_for "探针加载新情报" 40 "journalctl -u safe-probe --no-pager | grep -q 'threat intel loaded.*indicators=6'"
+getent hosts one.one.one.one >/dev/null || true # 只解析，不连接：验证 DNS 路径
+# 不经 DNS、直接连 1.1.1.1，SNI 为 cloudflare-dns.com：验证 TLS 路径与流记录（IP）路径
+curl -sS -m 10 -o /dev/null --resolve cloudflare-dns.com:443:1.1.1.1 https://cloudflare-dns.com/ || true
+HOSTIP=$(ip -4 -o addr show "$IFACE" | awk '{split($4,a,"/"); print a[1]; exit}')
+intel_alert() { api GET /alerts | json "[a for a in d if a['type']=='threat_intel' and a['ip']=='$HOSTIP' and '$1' in a['message']][0]"; }
+wait_for "真实 DNS 查询 one.one.one.one → 威胁情报告警" 60 "intel_alert '查询了情报中的域名 one.one.one.one'"
+wait_for "真实 TLS 连接（SNI cloudflare-dns.com）→ 威胁情报告警" 60 "intel_alert 'SNI）情报中的域名 cloudflare-dns.com'"
+# 流记录在连接结束并超时后才输出（Suricata 默认关闭状态的 TCP 流约 60 秒）
+wait_for "真实连接 1.1.1.1 的流记录 → 威胁情报告警" 180 "intel_alert '1.1.1.1:443'"
+grep '"flow_id"' /var/log/suricata/eve.json | grep -m1 '"event_type":"dns"' | python3 -c 'import sys,json;d=json.load(sys.stdin)["dns"];print("    DNS 记录格式：version=%s type=%s" % (d.get("version",2), d.get("type")))' || true
+# 这段时间里 CI 机器的正常出站流量（软件下载、GitHub 通信）不应被误判
+FP=$(api GET /alerts | json "len([a for a in d if a['ip']=='$HOSTIP' and a['type'] in ('dns_anomaly','c2_beacon','exfiltration')])")
+[ "$FP" = 0 ] && ok "CI 机器的正常流量没有产生 DGA / 隧道 / 心跳 / 外传误报" || { api GET /alerts | json "[a['message'] for a in d if a['ip']=='$HOSTIP']"; fail "正常流量产生了 $FP 条误报"; }
+
 step "攻击模拟自检"
 api POST /simulations '{"agent_id":"ci-agent","scenarios":["fim","process","honeypot","reverse_shell","download_exec","webshell"]}' >/dev/null
-# 情报自检：CI 中没有 Suricata 抓包，按 Agent 将要发出的查询写入一条合成的 DNS 记录，验证情报匹配与自检判定
+# 情报自检：Agent 通过系统解析器真实查询自检域名，经出口网卡被 Suricata 看到
 SIM=$(api POST /simulations '{"agent_id":"ci-agent","scenarios":["intel_dns"]}' | json 'd[0]["id"]')
-# 真实情况下查询发生在 Agent 领取之后；合成记录也要等自检进入“执行中”再写入，否则告警先于领取出现
-wait_for "Agent 领取情报自检" 60 "api GET /simulations | json '[s for s in d if s[\"id\"]==\"$SIM\" and s[\"status\"]==\"running\"][0]'"
-printf '{"timestamp":"%s","event_type":"dns","src_ip":"10.9.0.21","dest_ip":"10.9.0.53","dest_port":53,"proto":"UDP","dns":{"type":"query","rrname":"%s.safe-sim.example.com"}}\n' \
-	"$(date -u +%Y-%m-%dT%H:%M:%S.000000+0000)" "$SIM" >>/var/log/suricata/eve.json
-wait_for "情报命中自检通过（合成的 DNS 记录）" 60 "api GET /simulations | json '[s for s in d if s[\"id\"]==\"$SIM\" and s[\"status\"]==\"passed\"][0]'"
+wait_for "情报命中自检通过（Agent 真实发出的 DNS 查询）" 150 "api GET /simulations | json '[s for s in d if s[\"id\"]==\"$SIM\" and s[\"status\"]==\"passed\"][0]'"
 wait_for "自检全部结束" 240 "api GET /simulations | json 'all(s[\"status\"] not in (\"pending\",\"running\") for s in d)' | grep -qx True"
 api GET /simulations | json '"\n".join("    %s %-9s %s %s" % (s["scenario"], s["status"], s.get("latency_ms",0), s.get("detail","")) for s in d)'
-[ "$(api GET /simulations | json 'sum(s["status"]=="passed" and s["scenario"]!="intel_dns" for s in d)')" = 6 ] || fail "自检未全部通过"
-ok "文件篡改、临时目录执行、访问蜜罐、反弹 shell、下载并执行、Webshell 6 个场景全部检出"
+[ "$(api GET /simulations | json 'sum(s["status"]=="passed" for s in d)')" = 7 ] || fail "自检未全部通过"
+ok "文件篡改、临时目录执行、访问蜜罐、反弹 shell、下载并执行、Webshell、情报命中 7 个场景全部检出"
 wait_for "自检产物已自动清理" 150 "! ls /etc/cron.d/safe-simulation-* /tmp/safe-sim-* /var/www/html/safe-sim-* 2>/dev/null | grep -q ."
 [ "$(api GET '/alerts?status=open' | json 'len([a for a in d if "sim-" in a["message"]])')" = 0 ] && ok "自检告警已自动关闭"
 [ "$(api GET /alerts | json 'len([a for a in d if "sim-" in a["message"] and a.get("incident_id")])')" = 0 ] && ok "自检告警不形成事件"
