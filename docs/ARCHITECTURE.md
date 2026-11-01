@@ -381,6 +381,8 @@ Agent 以 DaemonSet 部署（控制台"节点管理 → 生成 Agent 令牌 → 
   挂载宿主机磁盘、cgroup release_agent、sysrq / core_pattern，高）、访问容器运行时套接字（高）、
   命令中读取 ServiceAccount 令牌或访问集群 API（中）。容器内执行 kubectl 不告警（集群内任务经常正常使用）。
 - 节点通常应加入一个"集群"资产组，避免节点之间的正常登录被判为横向移动。
+- 不要把管理中心装在启用了 Ingress（如 k3s 自带的 Traefik）的节点上：Ingress 通过端口映射占用节点的 80 / 443，
+  会截走发往管理控制台的请求；确需同机时用 `SAFE_CONSOLE_PORT` 换一个控制台端口。
 
 ## 20. 权限模型
 

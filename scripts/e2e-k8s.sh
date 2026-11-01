@@ -38,7 +38,9 @@ TOKEN=$(curl -fsSk -X POST "$CONSOLE/api/v1/auth/login" -d "{\"username\":\"admi
 PIN=$(api GET /install-info | json 'd["pin"]')
 
 step "安装 k3s（单节点 Kubernetes ${K3S_VERSION}）"
-curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="$K3S_VERSION" sh -s - --write-kubeconfig-mode 644 >/dev/null 2>&1
+# 不启用 k3s 自带的 Traefik / ServiceLB：它们通过端口映射占用节点的 80 / 443，会截走发往本机管理控制台（443）的请求
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="$K3S_VERSION" sh -s - --write-kubeconfig-mode 644 \
+	--disable traefik --disable servicelb >/dev/null 2>&1
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 wait_for "节点就绪" 180 "kubectl get nodes | grep -qw Ready"
 NODE_NAME=$(kubectl get nodes -o jsonpath='{.items[0].metadata.name}')
@@ -51,7 +53,10 @@ kubectl -n safe-system create secret generic safe-enroll --from-literal=token="$
 curl -fsSLk --pinnedpubkey "$PIN" "$NODE/install/agent-k8s.yaml" | kubectl apply -f - | sed 's/^/    /'
 agent_field() { api GET /agents | json "[a for a in d if a['id']=='$NODE_NAME'][0]$1"; }
 diag() {
-	kubectl -n safe-system get pods -o wide || true
+	echo "    管理中心 /agents 返回："
+	api GET /agents | head -c 600 || echo "    （请求失败）"
+	echo
+	kubectl get pods -A -o wide || true
 	kubectl -n safe-system describe pods | tail -30 || true
 	kubectl -n safe-system logs -l app=safe-agent --all-containers --tail=50 || true
 }
