@@ -1,0 +1,311 @@
+// Package model 定义管理中心、探针、Agent 之间共享的数据结构。
+package model
+
+import "time"
+
+type Port struct {
+	Port    int    `json:"port"`
+	Proto   string `json:"proto"`
+	Service string `json:"service,omitempty"`
+	Banner  string `json:"banner,omitempty"`
+}
+
+type Asset struct {
+	IP        string    `json:"ip"`
+	Hostname  string    `json:"hostname,omitempty"`
+	Ports     []Port    `json:"ports"`
+	ProbeID   string    `json:"probe_id"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+}
+
+type TaskStatus string
+
+const (
+	TaskPending TaskStatus = "pending"
+	TaskRunning TaskStatus = "running"
+	TaskDone    TaskStatus = "done"
+	TaskFailed  TaskStatus = "failed"
+)
+
+// ScanTask 由管理中心创建，指定探针领取后执行。
+type ScanTask struct {
+	ID       string   `json:"id"`
+	ProbeID  string   `json:"probe_id"`
+	Targets  []string `json:"targets"` // IP、CIDR 或 a.b.c.d-e 形式的范围
+	Ports    []int    `json:"ports"`
+	Baseline bool     `json:"baseline"` // 基线扫描：只建立资产台账，不产生告警
+	Kind     TaskKind `json:"kind"`
+	// WeakPassword 为 true 时漏洞检测会尝试少量常见弱口令（会产生真实的登录失败记录）。
+	WeakPassword bool       `json:"weak_password"`
+	Status       TaskStatus `json:"status"`
+	Error        string     `json:"error,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+}
+
+// ScanReport 是探针执行完任务后上报的结果。
+type ScanReport struct {
+	TaskID     string        `json:"task_id"`
+	ProbeID    string        `json:"probe_id"`
+	Assets     []Asset       `json:"assets"`
+	Checks     []CheckResult `json:"checks,omitempty"`
+	Error      string        `json:"error,omitempty"`
+	StartedAt  time.Time     `json:"started_at"`
+	FinishedAt time.Time     `json:"finished_at"`
+}
+
+type Role string
+
+const (
+	RoleAdmin  Role = "admin"  // 全部权限：下发任务、处理告警、管理用户
+	RoleViewer Role = "viewer" // 只读
+)
+
+type User struct {
+	ID        int64     `json:"id"`
+	Username  string    `json:"username"`
+	Role      Role      `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type AlertType string
+
+const (
+	AlertNewAsset  AlertType = "new_asset"  // 首次发现的主机
+	AlertNewPort   AlertType = "new_port"   // 已知主机上新开放的端口
+	AlertRiskyPort AlertType = "risky_port" // 新开放的高危服务端口
+)
+
+type Severity string
+
+const (
+	SeverityLow    Severity = "low"
+	SeverityMedium Severity = "medium"
+	SeverityHigh   Severity = "high"
+)
+
+type AlertStatus string
+
+const (
+	AlertOpen  AlertStatus = "open"
+	AlertAcked AlertStatus = "acked"
+)
+
+type Alert struct {
+	ID        int64       `json:"id"`
+	Type      AlertType   `json:"type"`
+	Severity  Severity    `json:"severity"`
+	IP        string      `json:"ip"`
+	Port      int         `json:"port,omitempty"`
+	Message   string      `json:"message"`
+	Status    AlertStatus `json:"status"`
+	AckedBy   string      `json:"acked_by,omitempty"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
+type HostEventType string
+
+const (
+	EventLoginSuccess      HostEventType = "login_success"
+	EventLoginFailed       HostEventType = "login_failed"
+	EventSudo              HostEventType = "sudo"
+	EventFileChanged       HostEventType = "file_changed"
+	EventSuspiciousProcess HostEventType = "suspicious_process"
+)
+
+// HostEvent 是主机 Agent 采集到的一条审计事件。
+type HostEvent struct {
+	ID      int64         `json:"id,omitempty"`
+	AgentID string        `json:"agent_id,omitempty"` // 由管理中心填写
+	Type    HostEventType `json:"type"`
+	Time    time.Time     `json:"time"`
+	User    string        `json:"user,omitempty"`
+	SrcIP   string        `json:"src_ip,omitempty"`
+	Path    string        `json:"path,omitempty"`
+	Detail  string        `json:"detail,omitempty"`
+}
+
+type AgentStatus string
+
+const (
+	AgentOnline  AgentStatus = "online"
+	AgentOffline AgentStatus = "offline"
+)
+
+type AgentInfo struct {
+	ID       string      `json:"id"`
+	Hostname string      `json:"hostname"`
+	OS       string      `json:"os"`
+	Version  string      `json:"version"`
+	IPs      []string    `json:"ips"`
+	Status   AgentStatus `json:"status,omitempty"`
+	LastSeen time.Time   `json:"last_seen,omitempty"`
+}
+
+// AgentReport 是 Agent 定期上报的心跳 + 事件批次。
+type AgentReport struct {
+	Agent  AgentInfo   `json:"agent"`
+	Events []HostEvent `json:"events"`
+}
+
+const (
+	AlertSSHBruteForce     AlertType = "ssh_bruteforce"
+	AlertBruteForceSuccess AlertType = "bruteforce_success" // 爆破来源随后登录成功
+	AlertRootLogin         AlertType = "root_login"
+	AlertFileChanged       AlertType = "file_changed"
+	AlertSuspiciousProcess AlertType = "suspicious_process"
+	AlertAgentOffline      AlertType = "agent_offline"
+)
+
+// IDSEvent 是探针从 Suricata 告警中归一化出的流量检测事件。
+type IDSEvent struct {
+	ID          int64     `json:"id,omitempty"`
+	ProbeID     string    `json:"probe_id,omitempty"` // 由管理中心填写
+	Time        time.Time `json:"time"`
+	SrcIP       string    `json:"src_ip"`
+	SrcPort     int       `json:"src_port,omitempty"`
+	DestIP      string    `json:"dest_ip"`
+	DestPort    int       `json:"dest_port,omitempty"`
+	Proto       string    `json:"proto"`
+	AppProto    string    `json:"app_proto,omitempty"`
+	SignatureID int64     `json:"signature_id"`
+	Signature   string    `json:"signature"`
+	Category    string    `json:"category,omitempty"`
+	Severity    int       `json:"severity"` // Suricata 优先级：1 最高
+	Action      string    `json:"action,omitempty"`
+	Suppressed  bool      `json:"suppressed,omitempty"`
+}
+
+type IDSReport struct {
+	ProbeID string     `json:"probe_id"`
+	Events  []IDSEvent `json:"events"`
+}
+
+// IDSSuppression 抑制指定规则的告警；SrcIP 为空表示对所有来源生效。
+type IDSSuppression struct {
+	ID          int64     `json:"id"`
+	SignatureID int64     `json:"signature_id"`
+	SrcIP       string    `json:"src_ip,omitempty"`
+	Note        string    `json:"note,omitempty"`
+	CreatedBy   string    `json:"created_by"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+const AlertIDS AlertType = "ids"
+
+type NodeKind string
+
+const (
+	NodeProbe NodeKind = "probe"
+	NodeAgent NodeKind = "agent"
+)
+
+type NodeStatus string
+
+const (
+	NodeActive  NodeStatus = "active"
+	NodeRevoked NodeStatus = "revoked"
+)
+
+// Node 是通过证书注册的探针或 Agent。
+type Node struct {
+	Kind       NodeKind   `json:"kind"`
+	ID         string     `json:"id"`
+	Serial     string     `json:"serial"`
+	Status     NodeStatus `json:"status"`
+	CertExpiry time.Time  `json:"cert_expiry"`
+	EnrolledAt time.Time  `json:"enrolled_at"`
+	TokenID    int64      `json:"token_id"`
+}
+
+// EnrollToken 允许节点注册；明文令牌只在创建时返回一次。
+type EnrollToken struct {
+	ID        int64     `json:"id"`
+	Kind      NodeKind  `json:"kind"`
+	MaxUses   int       `json:"max_uses"`
+	Uses      int       `json:"uses"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Note      string    `json:"note,omitempty"`
+	CreatedBy string    `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type TaskKind string
+
+const (
+	TaskDiscovery TaskKind = "discovery" // 资产发现：端口扫描
+	TaskVuln      TaskKind = "vuln"      // 漏洞检测：端口扫描 + 未授权访问 / 弱口令检查
+)
+
+// CheckResult 是对某个端口执行一项检查的结果。Vulnerable=false 表示检查已执行且未发现问题，
+// 管理中心据此把之前发现的同一漏洞标记为已修复。
+type CheckResult struct {
+	IP         string   `json:"ip"`
+	Port       int      `json:"port"`
+	CheckID    string   `json:"check_id"`
+	Vulnerable bool     `json:"vulnerable"`
+	Title      string   `json:"title,omitempty"`
+	Severity   Severity `json:"severity,omitempty"`
+	Detail     string   `json:"detail,omitempty"`
+}
+
+type VulnStatus string
+
+const (
+	VulnOpen    VulnStatus = "open"
+	VulnFixed   VulnStatus = "fixed"
+	VulnIgnored VulnStatus = "ignored" // 人工确认为可接受的风险，复查仍存在也不再告警
+)
+
+type Vuln struct {
+	ID        int64      `json:"id"`
+	IP        string     `json:"ip"`
+	Port      int        `json:"port"`
+	CheckID   string     `json:"check_id"`
+	Title     string     `json:"title"`
+	Severity  Severity   `json:"severity"`
+	Detail    string     `json:"detail"`
+	Status    VulnStatus `json:"status"`
+	FirstSeen time.Time  `json:"first_seen"`
+	LastSeen  time.Time  `json:"last_seen"`
+	FixedAt   *time.Time `json:"fixed_at,omitempty"`
+}
+
+const AlertVuln AlertType = "vuln"
+
+type ChannelType string
+
+const (
+	ChannelWeCom    ChannelType = "wecom"    // 企业微信群机器人
+	ChannelDingTalk ChannelType = "dingtalk" // 钉钉群机器人
+	ChannelFeishu   ChannelType = "feishu"   // 飞书群机器人
+	ChannelWebhook  ChannelType = "webhook"  // 通用 Webhook，POST JSON
+)
+
+// NotifyChannel 是告警推送渠道。URL 和 Secret 只在创建时提交，列表接口返回脱敏后的 URL。
+type NotifyChannel struct {
+	ID          int64       `json:"id"`
+	Name        string      `json:"name"`
+	Type        ChannelType `json:"type"`
+	URL         string      `json:"url"`
+	Secret      string      `json:"secret,omitempty"` // 钉钉 / 飞书加签密钥
+	MinSeverity Severity    `json:"min_severity"`
+	Enabled     bool        `json:"enabled"`
+	LastError   string      `json:"last_error,omitempty"`
+	LastSentAt  *time.Time  `json:"last_sent_at,omitempty"`
+	CreatedAt   time.Time   `json:"created_at"`
+}
+
+// AuditEntry 记录一次管理操作。
+type AuditEntry struct {
+	ID       int64     `json:"id"`
+	Time     time.Time `json:"time"`
+	Username string    `json:"username"`
+	Action   string    `json:"action"`
+	Target   string    `json:"target,omitempty"`
+	Detail   string    `json:"detail,omitempty"`
+	ClientIP string    `json:"client_ip"`
+	Success  bool      `json:"success"`
+}

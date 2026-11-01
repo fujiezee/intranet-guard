@@ -1,0 +1,17 @@
+# 合并到 /etc/suricata/suricata.yaml 的 outputs 段。
+# 给探针单独输出一个只含 alert 的 eve 文件：体积小，探针读取压力低；
+# 原有的 eve.json（flow/dns/http 等）可以继续保留给其他系统使用。
+outputs:
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve-alert.json
+      types:
+        - alert:
+            tagged-packets: no
+            payload: no          # 不输出载荷，避免敏感数据离开探针
+            metadata: yes
+
+# 规则：推荐 ET Open（免费）
+#   suricata-update && systemctl restart suricata
+# 网卡：探针机器接交换机镜像口（SPAN）或分光器，在 af-packet 段配置对应网卡。

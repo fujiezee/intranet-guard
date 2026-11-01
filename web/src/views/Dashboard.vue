@@ -1,0 +1,89 @@
+<template>
+  <div v-loading="loading">
+    <div class="page-header"><h2>总览</h2></div>
+    <el-row :gutter="16">
+      <el-col :span="6"><el-card shadow="never"><el-statistic title="资产数量" :value="stats.assets" /></el-card></el-col>
+      <el-col :span="6"><el-card shadow="never"><el-statistic title="开放端口" :value="stats.open_ports" /></el-card></el-col>
+      <el-col :span="6">
+        <el-card shadow="never" class="clickable" @click="router.push('/vulns')">
+          <el-statistic title="未修复漏洞" :value="totalVulns" />
+          <div class="sev">
+            <el-tag type="danger" size="small">高 {{ stats.open_vulns.high || 0 }}</el-tag>
+            <el-tag type="warning" size="small">中 {{ stats.open_vulns.medium || 0 }}</el-tag>
+            <el-tag type="info" size="small">低 {{ stats.open_vulns.low || 0 }}</el-tag>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="6">
+        <el-card shadow="never" class="clickable" @click="router.push('/alerts')">
+          <el-statistic title="未处理告警" :value="totalAlerts" />
+          <div class="sev">
+            <el-tag type="danger" size="small">高 {{ stats.open_alerts.high || 0 }}</el-tag>
+            <el-tag type="warning" size="small">中 {{ stats.open_alerts.medium || 0 }}</el-tag>
+            <el-tag type="info" size="small">低 {{ stats.open_alerts.low || 0 }}</el-tag>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="16" style="margin-top: 16px">
+      <el-col :span="10">
+        <el-card shadow="never" header="服务分布（Top 10）">
+          <el-empty v-if="!stats.top_services.length" description="暂无数据" />
+          <div v-for="s in stats.top_services" :key="s.service" class="bar-row">
+            <span class="bar-label mono">{{ s.service }}</span>
+            <el-progress :percentage="Math.round((s.count / maxService) * 100)" :format="() => s.count" :stroke-width="14" />
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="14">
+        <el-card shadow="never" header="最新未处理告警">
+          <el-table :data="recentAlerts" size="small" empty-text="暂无告警">
+            <el-table-column label="级别" width="70">
+              <template #default="{ row }"><SeverityTag :severity="row.severity" /></template>
+            </el-table-column>
+            <el-table-column prop="message" label="内容" />
+            <el-table-column label="时间" width="170">
+              <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </el-col>
+    </el-row>
+  </div>
+</template>
+
+<script setup>
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { api } from '../api'
+import { formatTime } from '../format'
+import SeverityTag from '../components/SeverityTag.vue'
+
+const router = useRouter()
+const loading = ref(true)
+const stats = ref({ assets: 0, open_ports: 0, running_tasks: 0, open_alerts: {}, open_vulns: {}, top_services: [] })
+const recentAlerts = ref([])
+
+const totalVulns = computed(() => Object.values(stats.value.open_vulns).reduce((a, b) => a + b, 0))
+const totalAlerts = computed(() => Object.values(stats.value.open_alerts).reduce((a, b) => a + b, 0))
+const maxService = computed(() => Math.max(1, ...stats.value.top_services.map((s) => s.count)))
+
+onMounted(async () => {
+  try {
+    const [s, alerts] = await Promise.all([api.stats(), api.alerts('open')])
+    stats.value = s
+    recentAlerts.value = alerts.slice(0, 8)
+  } finally {
+    loading.value = false
+  }
+})
+</script>
+
+<style scoped>
+.sev { margin-top: 8px; display: flex; gap: 6px; }
+.clickable { cursor: pointer; }
+.bar-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.bar-label { width: 110px; flex-shrink: 0; font-size: 13px; }
+.bar-row .el-progress { flex: 1; }
+</style>

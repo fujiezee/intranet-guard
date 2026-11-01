@@ -1,0 +1,24 @@
+# 安装：
+#   install -m 755 safe-probe-linux-amd64 /usr/local/bin/safe-probe
+#   install -m 600 /dev/null /etc/safe-probe.env && echo 'SAFE_ENROLL_TOKEN=<控制台"节点管理"生成的令牌>' > /etc/safe-probe.env
+#   按实际修改下面的 -server、-id，不接 Suricata 时去掉 -eve
+#   cp safe-probe.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now safe-probe
+#   首次启动时用令牌注册，证书保存在 /var/lib/safe-probe；注册成功后可从 env 文件中删除令牌。
+[Unit]
+Description=safe network probe
+After=network-online.target suricata.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/safe-probe.env
+ExecStart=/usr/local/bin/safe-probe -server https://SAFE_SERVER:8443 -id SEGMENT_NAME -eve /var/log/suricata/eve-alert.json
+Restart=always
+RestartSec=5
+StateDirectory=safe-probe
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/safe-probe
+
+[Install]
+WantedBy=multi-user.target

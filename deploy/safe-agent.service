@@ -1,0 +1,25 @@
+# 安装：
+#   install -m 755 safe-agent-linux-amd64 /usr/local/bin/safe-agent
+#   install -m 600 /dev/null /etc/safe-agent.env && echo 'SAFE_ENROLL_TOKEN=<控制台"节点管理"生成的令牌>' > /etc/safe-agent.env
+#   cp safe-agent.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now safe-agent
+#   首次启动时用令牌注册，证书保存在 /var/lib/safe-agent；注册成功后可从 env 文件中删除令牌。
+[Unit]
+Description=safe host security agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/safe-agent.env
+ExecStart=/usr/local/bin/safe-agent -server https://SAFE_SERVER:8443
+Restart=always
+RestartSec=5
+StateDirectory=safe-agent
+# 需要 root 读取 auth 日志、/etc/shadow 和其他用户进程信息，其余能力尽量收紧。
+NoNewPrivileges=yes
+ProtectHome=read-only
+ProtectSystem=strict
+ReadWritePaths=/var/lib/safe-agent
+PrivateTmp=no
+
+[Install]
+WantedBy=multi-user.target
