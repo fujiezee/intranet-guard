@@ -157,7 +157,7 @@ mTLS 节点认证、PostgreSQL / ClickHouse、告警推送、操作审计、一�
 真实 Ubuntu 上蜜罐访问归入来源主机的事件。风险分附带逐项原因。**未做**：告警按资产负责人定向推送
 （推送渠道目前按级别过滤，负责人路由放到 v1.0 值守工作台）；跨主机关联（同一攻击来源打多台主机）仍是多个事件。
 
-### v0.6 Windows 与域控（开发约 2～3 天；域控检测需先搭测试 AD 域）
+### v0.6 Windows 与域控（Windows Agent ✅ 已完成；域控检测待测试域验证）
 
 **目标**：覆盖企业内网的主体——Windows 终端、服务器和 AD 域。
 
@@ -172,6 +172,13 @@ mTLS 节点认证、PostgreSQL / ClickHouse、告警推送、操作审计、一�
 **前提**：需要一套测试域环境（可用现有 Parallels 中的 Windows 11 加一台 Windows Server 搭建）。
 
 **验收**：测试域中模拟的 Kerberoasting、DCSync、横向登录全部检出；Windows Agent 资源占用与 Linux 同等。
+
+**结果**：Windows Agent 在 GitHub 的真实 Windows Server 上端到端验证 36 项：PowerShell 一行命令安装（公钥固定）、
+开启审计、服务以 LocalSystem 运行；暴力破解、编码 PowerShell、清除日志、新建账户、加入管理员组、可疑服务全部检出；
+自检（下载执行、Webshell）通过；封禁 IP、结束进程、隔离文件及撤销通过；停止感知、升级、卸载通过。
+**未完成**：域控规则（Kerberoasting、AS-REP、DCSync、凭据传递）只有样例事件的单元测试，需要在测试 AD 域中用真实工具验证；
+隔离主机在 Windows 上暂不支持；Windows Agent 资源占用尚未在业务负载下实测；RDP 开启网络级身份验证时
+部分 4625 不带来源地址，这类爆破目前不计入统计。
 
 ### v0.7 威胁情报与外联分析（约 1 天）
 
