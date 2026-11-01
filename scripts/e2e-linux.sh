@@ -173,6 +173,7 @@ if [ -n "$UPGRADE_DIR" ]; then
 	[ -L /usr/local/bin/safe-agent ] && [ -x /var/lib/safe-agent/bin/safe-agent ] && ok "Agent 程序位于可写的状态目录（/usr/local/bin 下为链接）"
 	cp /opt/safe/downloads/safe-agent-linux-amd64 "$WORK/agent-ci"
 	install -m 755 "$UPGRADE_DIR/safe-agent-next" "$DL/safe-agent-linux-amd64"
+	install -m 644 "$UPGRADE_DIR/safe-agent-next.sig" "$DL/safe-agent-linux-amd64.sig"
 	echo '{"version": "ci-next"}' >"$DL/manifest.json"
 	[ "$(api GET /upgrades | json 'd["latest"]["version"]')" = ci-next ] && ok "管理中心识别到新版本 ci-next"
 	api POST /upgrades '{"agent_ids":["ci-agent"]}' >/dev/null
@@ -183,6 +184,7 @@ if [ -n "$UPGRADE_DIR" ]; then
 	journalctl -u safe-agent --no-pager | grep -q "agent upgrade completed" && ok "日志记录升级完成"
 
 	install -m 755 "$UPGRADE_DIR/safe-agent-broken" "$DL/safe-agent-linux-amd64"
+	install -m 644 "$UPGRADE_DIR/safe-agent-broken.sig" "$DL/safe-agent-linux-amd64.sig"
 	echo '{"version": "ci-broken"}' >"$DL/manifest.json"
 	api POST /upgrades '{"agent_ids":["ci-agent"]}' >/dev/null
 	wait_for "坏版本（能通过自检、运行即退出）被自动回退，升级状态为失败" 180 "up_state \"['state']\" | grep -qx failed"

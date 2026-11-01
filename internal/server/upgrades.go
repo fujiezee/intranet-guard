@@ -11,12 +11,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"safe/internal/model"
+	signing "safe/internal/release"
 	"safe/internal/store"
 	"safe/internal/update"
 )
@@ -25,6 +27,38 @@ import (
 type agentRelease struct {
 	Version string            `json:"version"`
 	Files   map[string]string `json:"-"` // 文件名 → SHA-256
+	Sigs    map[string]string `json:"-"` // 文件名 → 离线签名（<文件名>.sig），Agent 验证，管理中心只转发
+}
+
+// ReleaseKeys 是构建时写入的发布公钥，只用于在控制台提前显示签名状态：是否接受升级始终由 Agent 自己判断。
+var ReleaseKeys = ""
+
+// 版本清单的签名状态。
+const (
+	signatureVerified  = "verified"  // 所有平台的程序都通过验证
+	signatureUnchecked = "unchecked" // 都有签名，但这个管理中心没有公钥，无法提前验证
+	signatureMissing   = "missing"   // 有程序缺少签名
+	signatureInvalid   = "invalid"   // 有程序的签名不正确
+)
+
+func (r agentRelease) signatureStatus() string {
+	if len(r.Files) == 0 {
+		return ""
+	}
+	status := signatureVerified
+	for file, sum := range r.Files {
+		sig := r.Sigs[file]
+		if sig == "" {
+			return signatureMissing
+		}
+		switch err := signing.Verify(ReleaseKeys, r.Version, file, sum, sig); {
+		case errors.Is(err, signing.ErrNoKey):
+			status = signatureUnchecked
+		case err != nil:
+			return signatureInvalid
+		}
+	}
+	return status
 }
 
 type releaseCache struct {
@@ -63,7 +97,7 @@ func (s *Server) agentRelease() (agentRelease, error) {
 	if err := json.Unmarshal(data, &rel); err != nil {
 		return agentRelease{}, fmt.Errorf("manifest.json: %w", err)
 	}
-	rel.Files = map[string]string{}
+	rel.Files, rel.Sigs = map[string]string{}, map[string]string{}
 	entries, _ := os.ReadDir(s.cfg.DistDir)
 	for _, e := range entries {
 		if !agentBinary.MatchString(e.Name()) {
@@ -80,6 +114,9 @@ func (s *Server) agentRelease() (agentRelease, error) {
 			return agentRelease{}, err
 		}
 		rel.Files[e.Name()] = hex.EncodeToString(h.Sum(nil))
+		if sig, err := os.ReadFile(filepath.Join(s.cfg.DistDir, e.Name()+".sig")); err == nil {
+			rel.Sigs[e.Name()] = strings.TrimSpace(string(sig))
+		}
 	}
 	c.rel, c.modTime = rel, fi.ModTime()
 	return rel, nil
@@ -144,7 +181,7 @@ func (s *Server) upgradeCommand(r *http.Request, a model.AgentInfo) (*model.Agen
 		return nil, s.store.FailUpgrade(r.Context(), a.ID, attempt, "管理中心没有该平台（"+a.OS+"）的 Agent 程序")
 	}
 	return &model.AgentCommand{ID: attempt, Type: "upgrade",
-		Params: map[string]string{"version": target, "file": file, "sha256": sum}}, nil
+		Params: map[string]string{"version": target, "file": file, "sha256": sum, "signature": rel.Sigs[file]}}, nil
 }
 
 func (s *Server) whoami(w http.ResponseWriter, r *http.Request) {
@@ -161,7 +198,8 @@ type upgradeAgent struct {
 	OS       string              `json:"os"`
 	Version  string              `json:"version"`
 	Status   model.AgentStatus   `json:"status"`
-	Outdated bool                `json:"outdated"` // 与管理中心提供的版本不同
+	Outdated bool                `json:"outdated"`           // 与管理中心提供的版本不同
+	Verifies bool                `json:"verifies_signature"` // Agent 自报：这个版本会验证发布签名
 	Upgrade  *store.AgentUpgrade `json:"upgrade,omitempty"`
 }
 
@@ -189,7 +227,7 @@ func (s *Server) listUpgrades(w http.ResponseWriter, r *http.Request) {
 	out := []upgradeAgent{}
 	for _, a := range agents {
 		ua := upgradeAgent{ID: a.ID, Hostname: a.Hostname, OS: a.OS, Version: a.Version, Status: a.Status,
-			Outdated: rel.Version != "" && a.Version != rel.Version}
+			Outdated: rel.Version != "" && a.Version != rel.Version, Verifies: slices.Contains(a.Capabilities, "signed_upgrade")}
 		if u, ok := ups[a.ID]; ok {
 			ua.Upgrade = &u
 		}
@@ -201,7 +239,7 @@ func (s *Server) listUpgrades(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(files)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"latest": map[string]any{"version": rel.Version, "files": files}, "policy": p, "agents": out})
+		"latest": map[string]any{"version": rel.Version, "files": files, "signature": rel.signatureStatus()}, "policy": p, "agents": out})
 }
 
 func (s *Server) setUpgradePolicy(w http.ResponseWriter, r *http.Request) {

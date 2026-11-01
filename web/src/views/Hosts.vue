@@ -104,7 +104,7 @@ const statusMap = {
   stopped: { label: t('已停止'), type: 'warning' },
 }
 const capLabels = { auth_log: t('登录审计'), fim: t('文件完整性'), webshell: 'Webshell', process_scan: t('进程扫描'), exec_monitor: t('命令审计'),
-  winlog: t('Windows 事件日志') }
+  winlog: t('Windows 事件日志'), signed_upgrade: t('验证发布签名') }
 
 const upgradesOpen = ref(false)
 const agents = ref([])

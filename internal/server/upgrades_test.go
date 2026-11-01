@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,8 +12,98 @@ import (
 	"time"
 
 	"safe/internal/model"
+	signing "safe/internal/release"
 	"safe/internal/store"
 )
+
+// 签名失败是安全事件：告警、立即暂停自动升级；同一版本多台拒绝只告警一次；没有下发过的升级不能制造告警。
+func TestRejectedUpgradeSignature(t *testing.T) {
+	ctx := context.Background()
+	_, _, st := newTestServerWithStore(t)
+	if err := st.SetUpgradePolicy(ctx, store.UpgradePolicy{Mode: "auto", MaxConcurrent: 10, MaxFailures: 100}); err != nil {
+		t.Fatal(err)
+	}
+	p, _ := st.UpgradePolicy(ctx)
+	reject := func(id, attempt string) {
+		t.Helper()
+		res := model.CommandResult{ID: attempt, Status: "error", Detail: "发布签名验证失败", Code: model.ResultSignatureRejected}
+		if err := st.RecordCommandResults(ctx, id, []model.CommandResult{res}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rejected := func() int {
+		t.Helper()
+		alerts, err := st.ListAlerts(ctx, "", 100)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, a := range alerts {
+			if a.Type == model.AlertUpgradeRejected {
+				n++
+			}
+		}
+		return n
+	}
+	attempts := map[string]string{}
+	for _, id := range []string{"web01", "web02"} {
+		if err := st.SaveAgentReport(ctx, model.AgentReport{Agent: model.AgentInfo{ID: id, Hostname: id, OS: "linux/amd64", Version: "0.8.0", IPs: []string{"10.0.0.1"}}}); err != nil {
+			t.Fatal(err)
+		}
+		attempt, _, err := st.NextUpgrade(ctx, id, "0.8.0", "0.9.0", p)
+		if err != nil || attempt == "" {
+			t.Fatalf("no upgrade for %s: %q %v", id, attempt, err)
+		}
+		attempts[id] = attempt
+	}
+
+	reject("web01", "upg-deadbeef") // 不是下发给它的升级
+	if n := rejected(); n != 0 {
+		t.Fatalf("unknown attempt raised %d alerts", n)
+	}
+	if p, _ := st.UpgradePolicy(ctx); p.Paused {
+		t.Fatal("unknown attempt paused upgrades")
+	}
+	reject("web01", attempts["web01"])
+	if n := rejected(); n != 1 {
+		t.Fatalf("alerts after rejection: %d", n)
+	}
+	if p, _ := st.UpgradePolicy(ctx); !p.Paused || p.PausedReason == "" {
+		t.Fatalf("not paused after one rejection: %+v", p)
+	}
+	reject("web02", attempts["web02"])
+	if n := rejected(); n != 1 {
+		t.Fatalf("same version alerted twice: %d", n)
+	}
+	ups, _ := st.ListUpgrades(ctx)
+	if ups["web02"].State != store.UpgradeFailed {
+		t.Errorf("second rejection not recorded: %+v", ups["web02"])
+	}
+}
+
+func TestReleaseSignatureStatus(t *testing.T) {
+	pub, key, _ := ed25519.GenerateKey(nil)
+	const sum = "aa"
+	good := signing.Sign(key, "1.0.0", "safe-agent-linux-amd64", sum)
+	rel := func(sig string) agentRelease {
+		return agentRelease{Version: "1.0.0", Files: map[string]string{"safe-agent-linux-amd64": sum}, Sigs: map[string]string{"safe-agent-linux-amd64": sig}}
+	}
+	t.Cleanup(func() { ReleaseKeys = "" })
+	ReleaseKeys = ""
+	if s := rel(good).signatureStatus(); s != signatureUnchecked {
+		t.Errorf("no key: %s", s)
+	}
+	ReleaseKeys = base64.StdEncoding.EncodeToString(pub)
+	for sig, want := range map[string]string{good: signatureVerified, "": signatureMissing,
+		signing.Sign(key, "1.0.1", "safe-agent-linux-amd64", sum): signatureInvalid} {
+		if s := rel(sig).signatureStatus(); s != want {
+			t.Errorf("signature %q: %s, want %s", sig, s, want)
+		}
+	}
+	if s := (agentRelease{}).signatureStatus(); s != "" {
+		t.Errorf("no release: %s", s)
+	}
+}
 
 func TestAgentUpgrades(t *testing.T) {
 	_, adminToken, st := newTestServerWithStore(t)

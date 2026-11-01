@@ -6,12 +6,17 @@
       <div class="latest">
         {{ t('管理中心提供的版本：') }}<b>{{ data.latest.version }}</b>
         <span class="sub">（{{ data.latest.files.join('、') }}）</span>
+        <el-tag v-if="signature" size="small" :type="signature.type" class="sig">{{ signature.label }}</el-tag>
       </div>
+      <el-alert v-if="signature?.warn" type="error" :closable="false" show-icon class="sig-warn" :title="signature.warn" />
       <div class="summary">
         <el-tag type="success">{{ t('已是最新 {p0}', { p0: count.current }) }}</el-tag>
         <el-tag type="warning">{{ t('可升级 {p0}', { p0: count.outdated }) }}</el-tag>
         <el-tag>{{ t('升级中 {p0}', { p0: count.upgrading }) }}</el-tag>
         <el-tag type="danger">{{ t('失败 {p0}', { p0: count.failed }) }}</el-tag>
+        <el-tooltip :content="t('这些 Agent 还不验证发布签名：升级到内置公钥的版本后才受保护')">
+          <el-tag type="info">{{ t('未验证签名 {p0}', { p0: count.unprotected }) }}</el-tag>
+        </el-tooltip>
       </div>
 
       <el-card shadow="never" class="policy">
@@ -55,6 +60,11 @@
             <el-tag v-if="row.outdated" size="small" type="warning">{{ t('旧') }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column :label="t('发布签名')" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.verifies_signature ? 'success' : 'info'">{{ row.verifies_signature ? t('会验证') : t('不验证') }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column :label="t('状态')" width="70">
           <template #default="{ row }">{{ { online: t('在线'), offline: t('离线'), stopped: t('已停止') }[row.status] || row.status }}</template>
         </el-table-column>
@@ -89,15 +99,23 @@ const stateMap = {
   succeeded: { label: t('成功'), type: 'success' },
   failed: { label: t('失败'), type: 'danger' },
 }
+const signatureMap = {
+  verified: { label: t('签名已验证'), type: 'success' },
+  unchecked: { label: t('已签名，未预先验证'), type: 'info' },
+  missing: { label: t('缺少签名'), type: 'danger', warn: t('这个版本缺少发布签名，会验证签名的 Agent 将拒绝升级。请部署已签名的官方安装包。') },
+  invalid: { label: t('签名无效'), type: 'danger', warn: t('这个版本的发布签名不正确，升级包可能被替换。不要继续升级，先核对安装包来源。') },
+}
 const data = ref({ latest: { version: '', files: [] }, policy: {}, agents: [] })
+const signature = computed(() => signatureMap[data.value.latest.signature])
 const form = reactive({ mode: 'manual', max_concurrent: 20, max_failures: 3 })
 const selected = ref([])
 const onlyOutdated = ref(true)
 let timer = null
 
 const count = computed(() => {
-  const c = { current: 0, outdated: 0, upgrading: 0, failed: 0 }
+  const c = { current: 0, outdated: 0, upgrading: 0, failed: 0, unprotected: 0 }
   for (const a of data.value.agents) {
+    if (!a.verifies_signature) c.unprotected++
     if (a.upgrade?.state === 'upgrading' || a.upgrade?.state === 'queued') c.upgrading++
     else if (a.upgrade?.state === 'failed' && a.outdated) c.failed++
     else if (a.outdated) c.outdated++
@@ -132,6 +150,8 @@ async function queue(ids) {
 
 <style scoped>
 .latest { margin-bottom: 8px; }
+.sig { margin-left: 8px; }
+.sig-warn { margin-bottom: 12px; }
 .summary { display: flex; gap: 8px; margin-bottom: 12px; }
 .policy { margin-bottom: 12px; }
 .toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }

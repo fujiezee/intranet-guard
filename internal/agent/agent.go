@@ -112,6 +112,9 @@ func (a *Agent) Run(ctx context.Context) {
 			slog.Info("command auditing enabled (proc connector)")
 		}
 	}
+	if ReleaseKeys != "" {
+		a.info.Capabilities = append(a.info.Capabilities, "signed_upgrade")
+	}
 
 	t := time.NewTicker(a.cfg.Interval)
 	defer t.Stop()

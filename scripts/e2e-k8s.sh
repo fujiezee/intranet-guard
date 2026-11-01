@@ -104,6 +104,7 @@ if [ -n "$UPGRADE_DIR" ]; then
 	R0=$(restarts)
 	cp "$DL/safe-agent-linux-amd64" "$WORK/agent-ci"
 	install -m 755 "$UPGRADE_DIR/safe-agent-next" "$DL/safe-agent-linux-amd64"
+	install -m 644 "$UPGRADE_DIR/safe-agent-next.sig" "$DL/safe-agent-linux-amd64.sig"
 	echo '{"version": "ci-next"}' >"$DL/manifest.json"
 	api POST /upgrades "{\"agent_ids\":[\"$NODE_NAME\"]}" >/dev/null
 	wait_for "Agent 升级到 ci-next" 180 "[ \"\$(agent_field \"['version']\")\" = ci-next ]"

@@ -53,10 +53,16 @@ func (s *Store) RecordCommandResults(ctx context.Context, agentID string, result
 	for _, r := range results {
 		if strings.HasPrefix(r.ID, "upg-") {
 			// 升级成功以 Agent 用新版本重新上报为准（见 NextUpgrade）；这里只处理失败（下载、校验、自检失败或已回退）
-			if r.Status != "done" {
-				if err := s.FailUpgrade(ctx, agentID, r.ID, r.Detail); err != nil {
-					return err
-				}
+			var err error
+			switch {
+			case r.Status == "done":
+			case r.Code == model.ResultSignatureRejected:
+				err = s.RejectUpgrade(ctx, agentID, r.ID, r.Detail)
+			default:
+				err = s.FailUpgrade(ctx, agentID, r.ID, r.Detail)
+			}
+			if err != nil {
+				return err
 			}
 			continue
 		}

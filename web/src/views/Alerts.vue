@@ -74,6 +74,7 @@ const typeLabels = {
   webshell: 'Webshell',
   lateral_movement: t('横向移动'),
   agent_stopped: t('Agent 停止'),
+  upgrade_rejected: t('升级包签名失败'),
   account_change: t('账户变更'),
   domain_attack: t('域攻击'),
   threat_intel: t('威胁情报'),

@@ -3,7 +3,9 @@
 package agent
 
 import (
+	"crypto/ed25519"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +15,7 @@ import (
 	"testing"
 
 	"safe/internal/model"
+	signing "safe/internal/release"
 )
 
 // fakeVersion 构造一个"新版本"：用 shell 脚本模拟自检输出。
@@ -38,17 +41,34 @@ func TestRunUpgrade(t *testing.T) {
 	}))
 	defer srv.Close()
 	a := &Agent{cfg: Config{ServerURL: srv.URL, StatePath: filepath.Join(dir, "state.json"), HTTP: srv.Client()}}
+	pub, key, _ := ed25519.GenerateKey(nil)
+	ReleaseKeys = base64.StdEncoding.EncodeToString(pub)
+	t.Cleanup(func() { ReleaseKeys = "" })
 	cmd := func(id, ver string, b []byte) model.AgentCommand {
 		sum := sha256.Sum256(b)
-		return model.AgentCommand{ID: id, Type: "upgrade", Params: map[string]string{
-			"version": ver, "file": "safe-agent-linux-amd64", "sha256": hex.EncodeToString(sum[:])}}
+		hash := hex.EncodeToString(sum[:])
+		return model.AgentCommand{ID: id, Type: "upgrade", Params: map[string]string{"version": ver, "file": "safe-agent-linux-amd64",
+			"sha256": hash, "signature": signing.Sign(key, ver, "safe-agent-linux-amd64", hash)}}
 	}
 	old := func() bool { b, _ := os.ReadFile(exe); return string(b) == "OLD" }
 
+	// 伪造签名：标记为安全事件，让管理中心告警
+	badSig := cmd("upg-00000009", "9.9.9", []byte("x"))
+	badSig.Params["signature"] = base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
+	if r := a.runUpgrade(badSig); r.Status != "error" || r.Code != model.ResultSignatureRejected || !old() {
+		t.Errorf("badSig signature: %+v", r)
+	}
+	// 开发构建没有公钥：失败，但不是安全事件
+	savedKeys := ReleaseKeys
+	ReleaseKeys = ""
+	if r := a.runUpgrade(cmd("upg-0000000a", "9.9.9", []byte("x"))); r.Status != "error" || r.Code != "" || !old() {
+		t.Errorf("no key: %+v", r)
+	}
+	ReleaseKeys = savedKeys
+
 	// 校验失败：不替换
 	body = fakeVersion(`echo "version=9.9.9 id=x ok"; exit 0`)
-	bad := cmd("upg-00000001", "9.9.9", body)
-	bad.Params["sha256"] = strings.Repeat("0", 64)
+	bad := cmd("upg-00000001", "9.9.9", []byte("签名时的内容与下载到的不同"))
 	if r := a.runUpgrade(bad); r.Status != "error" || !strings.Contains(r.Detail, "SHA-256") || !old() {
 		t.Errorf("checksum mismatch: %+v", r)
 	}
@@ -108,6 +128,39 @@ func TestRunUpgrade(t *testing.T) {
 	if len(c.results) != 1 || c.results[0].ID != "upg-00000005" || c.results[0].Status != "error" || !strings.Contains(c.results[0].Detail, "自动回退") {
 		t.Errorf("rollback report: %+v", c.results)
 	}
+
+	// 管理中心被攻破：能下发任意指令和程序，但没有发布私钥。新程序不能被执行
+	marker := filepath.Join(dir, "executed")
+	body = fakeVersion(`touch ` + marker + `; echo "version=9.9.9 id=x ok"; exit 0`)
+	_, attacker, _ := ed25519.GenerateKey(nil)
+	forged := cmd("upg-00000007", "9.9.10", body)
+	forged.Params["signature"] = signing.Sign(attacker, "9.9.10", "safe-agent-linux-amd64", forged.Params["sha256"])
+	unsigned := cmd("upg-00000008", "9.9.10", body)
+	delete(unsigned.Params, "signature")
+	otherVersion := cmd("upg-00000009", "9.9.10", body)
+	otherVersion.Params["version"] = "9.9.11"
+	for _, c := range []model.AgentCommand{forged, unsigned, otherVersion} {
+		if r := a.runUpgrade(c); r.Status != "error" || !strings.Contains(r.Detail, "签名") {
+			t.Errorf("%s: %+v", c.ID, r)
+		}
+	}
+	keys := ReleaseKeys
+	ReleaseKeys = ""
+	if r := a.runUpgrade(cmd("upg-0000000a", "9.9.10", body)); r.Status != "error" {
+		t.Errorf("build without public key accepted upgrade: %+v", r)
+	}
+	ReleaseKeys = keys
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("unsigned program was executed")
+	}
+
+	// 有效签名的旧版本也不接受
+	current := Version
+	Version = "2.0.0"
+	if r := a.runUpgrade(cmd("upg-0000000b", "1.9.9", body)); r.Status != "error" || !strings.Contains(r.Detail, "降级") {
+		t.Errorf("downgrade: %+v", r)
+	}
+	Version = current
 
 	// 无效指令一律拒绝
 	for _, p := range []map[string]string{

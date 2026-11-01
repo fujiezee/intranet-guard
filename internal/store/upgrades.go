@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"time"
 
+	"safe/internal/alert"
+	"safe/internal/model"
 	"safe/internal/version"
 )
 
@@ -187,6 +189,55 @@ func (s *Store) FailUpgrade(ctx context.Context, agentID, attempt, detail string
 		return nil
 	}
 	return s.checkPause(ctx)
+}
+
+// RejectUpgrade 记录 Agent 因发布签名验证失败拒绝的升级：产生告警并立即暂停自动升级，不等失败数达到上限。
+// 只处理确实下发给这台 Agent 的升级，Agent 无法凭空制造这条告警。
+func (s *Store) RejectUpgrade(ctx context.Context, agentID, attempt, detail string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+	res, err := tx.ExecContext(ctx, `
+		UPDATE agent_upgrades SET state = ?, detail = ?, updated_at = ? WHERE agent_id = ? AND attempt = ? AND state = ?`,
+		UpgradeFailed, detail, now, agentID, attempt, UpgradeRunning)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil
+	}
+	var target, ips string
+	a := model.AgentInfo{ID: agentID}
+	err = tx.QueryRowContext(ctx, `
+		SELECT u.target, a.hostname, a.ips FROM agent_upgrades u JOIN agents a ON a.id = u.agent_id WHERE u.agent_id = ?`,
+		agentID).Scan(&target, &a.Hostname, &ips)
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal([]byte(ips), &a.IPs); err != nil {
+		return err
+	}
+	hostIP, err := primaryIP(ctx, tx, a)
+	if err != nil {
+		return err
+	}
+	if err := insertDedupAlert(ctx, tx, alert.UpgradeRejected(hostIP, agentID, target), now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	p, err := s.UpgradePolicy(ctx)
+	if err != nil || p.Paused {
+		return err
+	}
+	p.Paused = true
+	p.PausedReason = fmt.Sprintf("版本 %s 的升级包未通过发布签名验证，自动升级已暂停；确认安装包来源后在控制台恢复", target)
+	return s.SetUpgradePolicy(ctx, p)
 }
 
 func (s *Store) checkPause(ctx context.Context) error {

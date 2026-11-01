@@ -6,3 +6,6 @@
 /data/
 /backups/
 /dist/
+
+# 发布私钥只保存在离线介质上
+release.key

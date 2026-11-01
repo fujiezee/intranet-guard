@@ -65,7 +65,7 @@ func (s *Store) CountUsers(ctx context.Context) (int, error) {
 
 var ErrLastAdmin = errors.New("cannot remove the last admin")
 
-// DeleteUser 删除用户及其会话，但不允许删除最后一个管理员。
+// DeleteUser 删除用户及其会话和 API 令牌，但不允许删除最后一个管理员。
 func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -74,7 +74,8 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 	defer tx.Rollback()
 
 	var role model.Role
-	err = tx.QueryRowContext(ctx, `SELECT role FROM users WHERE id = ?`, id).Scan(&role)
+	var username string
+	err = tx.QueryRowContext(ctx, `SELECT role, username FROM users WHERE id = ?`, id).Scan(&role, &username)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
@@ -90,6 +91,10 @@ func (s *Store) DeleteUser(ctx context.Context, id int64) error {
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
+		return err
+	}
+	// 人员离职删除账户时，其创建的令牌一并失效
+	if _, err := tx.ExecContext(ctx, `DELETE FROM api_tokens WHERE created_by = ?`, username); err != nil {
 		return err
 	}
 	return tx.Commit()
