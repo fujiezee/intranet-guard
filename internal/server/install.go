@@ -2,8 +2,11 @@ package server
 
 import (
 	_ "embed"
+	htmltemplate "html/template"
+	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,6 +17,11 @@ import (
 
 //go:embed install/node.sh.tmpl
 var nodeScriptSrc string
+
+// upgradeGuard 是 Agent 升级保护脚本，由 Linux 安装脚本和 Kubernetes 清单写到节点上。
+//
+//go:embed install/upgrade-guard.sh
+var upgradeGuard string
 
 //go:embed install/agent-k8s.yaml.tmpl
 var k8sManifestSrc string
@@ -39,6 +47,11 @@ var (
 // 节点用什么地址下载脚本，之后就用同一地址连接管理中心。
 func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 	script := r.PathValue("script")
+	if script == "upgrade-guard.sh" { // Kubernetes 清单的 init 容器下载它
+		w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+		_, _ = io.WriteString(w, upgradeGuard)
+		return
+	}
 	kind := map[string]string{"agent.sh": "agent", "probe.sh": "probe", "agent.ps1": "agent", "agent-k8s.yaml": "agent"}[script]
 	if kind == "" {
 		writeError(w, http.StatusNotFound, "not found")
@@ -53,7 +66,8 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 	if len(s.cfg.NodeURLs) > 0 {
 		servers = strings.Join(s.cfg.NodeURLs, ",")
 	}
-	data := map[string]string{"Kind": kind, "ServerURL": "https://" + r.Host, "Servers": servers, "Pin": s.cfg.InstallPin}
+	data := map[string]string{"Kind": kind, "ServerURL": "https://" + r.Host, "Servers": servers, "Pin": s.cfg.InstallPin,
+		"Guard": upgradeGuard}
 	if strings.HasSuffix(script, ".yaml") {
 		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 		_ = k8sManifest.Execute(w, data)
@@ -88,8 +102,13 @@ type installInfo struct {
 	NodePort  int      `json:"node_port"`
 	Pin       string   `json:"pin"`
 	Available []string `json:"available"` // 可下载的节点程序
-	// WindowsCommand 是 Windows Agent 的一行安装命令（PowerShell 5.1），其中 __TOKEN__ 由控制台替换为注册令牌
+	// WindowsCommand 是 Windows Agent 的一行安装命令（PowerShell 5.1），其中 __TOKEN__、__HOSTPORT__
+	// 由控制台替换为注册令牌和管理中心地址
 	WindowsCommand string `json:"windows_command"`
+	// NodeURLs 是配置的全部实例节点接入地址（-node-urls）；Addresses 是本机可供节点连接的地址。
+	// 控制台据此给出安装命令中的默认地址：用 localhost 打开控制台时，命令里不能写 localhost。
+	NodeURLs  []string `json:"node_urls"`
+	Addresses []string `json:"addresses"`
 }
 
 // P-256 公钥的 SubjectPublicKeyInfo 固定前缀：PowerShell 5.1 只能取得证书的原始公钥，
@@ -109,14 +128,19 @@ func windowsCommand(serverHost, pin string) string {
 
 // installInfoHandler 供控制台拼出一键安装命令。
 func (s *Server) installInfoHandler(w http.ResponseWriter, r *http.Request) {
-	info := installInfo{NodePort: s.cfg.NodePort, Pin: s.cfg.InstallPin, Available: []string{}}
-	// 节点用浏览器访问控制台时的主机名连接管理中心（与 Linux 命令的生成方式一致）
-	host := r.Host
-	if h, _, err := net.SplitHostPort(r.Host); err == nil {
-		host = h
+	info := installInfo{NodePort: s.cfg.NodePort, Pin: s.cfg.InstallPin, Available: []string{},
+		NodeURLs: s.cfg.NodeURLs, Addresses: []string{}}
+	if info.NodeURLs == nil {
+		info.NodeURLs = []string{}
 	}
-	if hp := net.JoinHostPort(host, strconv.Itoa(s.cfg.NodePort)); validHost.MatchString(hp) && validPin.MatchString(s.cfg.InstallPin) {
-		info.WindowsCommand = windowsCommand(hp, s.cfg.InstallPin)
+	for _, h := range s.cfg.NodeHosts {
+		if ip, err := netip.ParseAddr(h); err == nil && (ip.IsLoopback() || ip.IsLinkLocalUnicast()) || h == "localhost" {
+			continue
+		}
+		info.Addresses = append(info.Addresses, h)
+	}
+	if validPin.MatchString(s.cfg.InstallPin) {
+		info.WindowsCommand = windowsCommand("__HOSTPORT__", s.cfg.InstallPin)
 	}
 	if s.cfg.DistDir != "" {
 		entries, _ := os.ReadDir(s.cfg.DistDir)
@@ -127,4 +151,31 @@ func (s *Server) installInfoHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, info)
+}
+
+var nodeIndexPage = htmltemplate.Must(htmltemplate.New("index").Parse(`<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>safe 节点接入端口</title>
+<style>body{font:15px/1.7 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:#303133;max-width:640px;margin:60px auto;padding:0 16px}
+code{background:#f5f7fa;padding:1px 5px;border-radius:3px}a{color:#409eff}</style></head><body>
+<h2>这是 safe 管理中心的节点接入端口</h2>
+<p>本端口供 Agent 和探针使用（双向证书认证），不是管理控制台。</p>
+{{if .Console}}<p>管理控制台：<a href="{{.Console}}">{{.Console}}</a></p>{{end}}
+<p>安装节点：登录控制台，在「节点管理」生成注册令牌，复制页面给出的安装命令到节点上执行。</p>
+</body></html>`))
+
+// nodeIndex：在浏览器中打开节点接入端口时，说明用途并给出控制台地址。
+func (s *Server) nodeIndex(w http.ResponseWriter, r *http.Request) {
+	console := ""
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if s.cfg.ConsolePort > 0 && validHost.MatchString(host) {
+		console = s.cfg.ConsoleScheme + "://" + net.JoinHostPort(host, strconv.Itoa(s.cfg.ConsolePort)) + "/"
+		console = strings.Replace(console, ":443/", "/", 1)
+		console = strings.Replace(console, "http://"+host+":80/", "http://"+host+"/", 1)
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = nodeIndexPage.Execute(w, map[string]string{"Console": console})
 }

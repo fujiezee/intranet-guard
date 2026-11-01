@@ -25,6 +25,12 @@
     <el-container>
       <el-header class="header">
         <!-- 跳到使用指南中当前页面对应的章节（章节锚点与路由名称一致） -->
+        <span v-if="ver" class="version">
+          v{{ ver.server.current }}
+          <el-tag v-if="ver.server.update_available" size="small" type="warning" effect="dark" class="update" @click="updateOpen = true">
+            新版本 v{{ ver.server.latest }}
+          </el-tag>
+        </span>
         <router-link v-if="route.name !== 'help'" class="help-link" :to="{ path: '/help', hash: `#${route.name}` }">帮助</router-link>
         <el-dropdown @command="onCommand">
           <span class="user">
@@ -54,6 +60,17 @@
         <el-button @click="pwDialog = false">取消</el-button>
         <el-button type="primary" @click="changePassword">确定</el-button>
       </template>
+    </el-dialog>
+    <el-dialog v-if="ver" v-model="updateOpen" :title="`新版本 v${ver.server.latest}`" width="680px">
+      <p>当前管理中心版本 v{{ ver.server.current }}<span v-if="ver.server.published_at">，新版本发布于 {{ formatTime(ver.server.published_at) }}</span>。</p>
+      <div class="notes" v-html="notes" />
+      <h4>升级步骤</h4>
+      <ol class="steps">
+        <li>从<a :href="ver.server.release_url" target="_blank" rel="noopener">发布页</a>下载与管理中心架构对应的安装包（safe-版本-linux-amd64 / arm64.tar.gz）。</li>
+        <li>拷到管理中心服务器，解压后执行 <code>sudo ./install.sh</code>：自动升级，数据和配置保留（升级前会自动备份）。</li>
+        <li>高可用部署时逐台升级各实例。</li>
+        <li>升级后在「主机审计 → Agent 升级」把节点升级到新版本（可选择自动升级）。</li>
+      </ol>
     </el-dialog>
   </el-container>
 </template>

@@ -66,6 +66,12 @@ install -d -m 750 -o root -g safe "$CONF"
 install -d -m 700 "$BACKUPS"
 
 # --- 程序 ---
+if [ "$UPGRADE" = 1 ] && [ -x "$PREFIX/backup.sh" ]; then
+	# 升级前先备份一次（数据库、CA、配置），升级出问题时可以恢复
+	say "升级前备份到 $BACKUPS"
+	( set -a; . "$ENV_FILE"; set +a; SAFE_HOME=$STATE SAFE_CONF=$CONF "$PREFIX/backup.sh" "$BACKUPS" ) >/dev/null 2>&1 ||
+		warn "升级前备份失败（继续升级）；可稍后手动执行 $PREFIX/backup.sh"
+fi
 say "安装程序到 $PREFIX"
 systemctl stop safe-server 2>/dev/null || true
 install -m 755 "$HERE/safe-server" "$PREFIX/safe-server"

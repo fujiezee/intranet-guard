@@ -51,6 +51,15 @@ func (s *Store) ClaimSimulations(ctx context.Context, agentID string) ([]model.A
 // 不适用或出错时直接结束该自检。
 func (s *Store) RecordCommandResults(ctx context.Context, agentID string, results []model.CommandResult) error {
 	for _, r := range results {
+		if strings.HasPrefix(r.ID, "upg-") {
+			// 升级成功以 Agent 用新版本重新上报为准（见 NextUpgrade）；这里只处理失败（下载、校验、自检失败或已回退）
+			if r.Status != "done" {
+				if err := s.FailUpgrade(ctx, agentID, r.ID, r.Detail); err != nil {
+					return err
+				}
+			}
+			continue
+		}
 		if strings.HasPrefix(r.ID, "act-") {
 			if err := s.recordActionResult(ctx, agentID, r); err != nil {
 				return err

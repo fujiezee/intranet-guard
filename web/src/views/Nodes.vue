@@ -80,6 +80,12 @@
           <p class="hint-block">网段名（探针 ID，用于下发扫描任务）：</p>
           <el-input v-model="probeID" placeholder="例如 office-3f" style="margin-bottom: 4px" />
         </template>
+        <p class="hint-block">管理中心地址（节点用这个地址下载程序和连接管理中心，必须是节点能访问到的地址）：</p>
+        <el-input v-model="server" placeholder="https://管理中心IP或域名:8443" style="margin-bottom: 4px" />
+        <el-alert v-if="!serverValid" type="error" :closable="false" show-icon title="地址格式应为 https://IP或域名:端口" style="margin-bottom: 4px" />
+        <el-alert v-else-if="serverLoopback" type="error" :closable="false" show-icon style="margin-bottom: 4px"
+          title="localhost / 127.0.0.1 只指向节点自己，节点无法用它连接管理中心，请改成管理中心的 IP 或域名" />
+        <el-alert v-else-if="serverNote" type="warning" :closable="false" show-icon :title="serverNote" style="margin-bottom: 4px" />
         <el-radio-group v-if="created.kind === 'agent'" v-model="platform" size="small" style="margin-top: 8px">
           <el-radio-button value="linux">Linux</el-radio-button>
           <el-radio-button value="windows">Windows</el-radio-button>
@@ -146,21 +152,49 @@ const binaryAvailable = computed(() =>
   installInfo.value?.available.some((f) => f.startsWith(windows.value ? 'safe-agent-windows-' : `safe-${created.value?.kind}-linux-`)),
 )
 
+// 安装命令中的管理中心地址：配置的正式地址（-node-urls）→ 浏览器地址栏的主机名 →
+// 用 localhost 打开控制台时换成本机的局域网地址（命令里写 localhost 的话，节点会连到它自己）
+const server = ref('')
+const serverNote = ref('')
+const loopback = (h) => ['localhost', '127.0.0.1', '::1', '[::1]'].includes(h)
+const serverHost = computed(() => {
+  try {
+    return new URL(server.value).hostname
+  } catch {
+    return ''
+  }
+})
+const serverValid = computed(() => /^https:\/\/[A-Za-z0-9.\-]+(:\d{1,5})?$|^https:\/\/\[[0-9A-Fa-f:.]+\](:\d{1,5})?$/.test(server.value.trim()))
+const serverLoopback = computed(() => loopback(serverHost.value))
+
+function defaultServer(info) {
+  serverNote.value = ''
+  if (info.node_urls.length) {
+    if (info.node_urls.length > 1) serverNote.value = `已配置 ${info.node_urls.length} 个管理中心实例，全部实例都会写入节点配置，连接失败时自动切换`
+    return info.node_urls[0]
+  }
+  if (!loopback(location.hostname)) return `https://${location.hostname}:${info.node_port}`
+  const ip = info.addresses.find((a) => /^\d+\.\d+\.\d+\.\d+$/.test(a)) || info.addresses[0]
+  if (!ip) return `https://${location.hostname}:${info.node_port}`
+  serverNote.value = `你用 localhost 打开了控制台，命令中已换成本机地址 ${ip}；如果节点应通过域名或其他地址访问，请修改（也可用启动参数 -node-urls 固定）`
+  return `https://${ip}:${info.node_port}`
+}
+
 const installCommand = computed(() => {
-  if (!created.value || !installInfo.value) return ''
+  if (!created.value || !installInfo.value || !serverValid.value || serverLoopback.value) return ''
   const { kind, token } = created.value
-  if (windows.value) return installInfo.value.windows_command.replace('__TOKEN__', token)
-  const server = `https://${location.hostname}:${installInfo.value.node_port}`
+  const base = server.value.trim()
+  if (windows.value) return installInfo.value.windows_command.replace('__TOKEN__', token).replace('__HOSTPORT__', new URL(base).host)
   if (k8s.value) {
     return [
       'kubectl create namespace safe-system',
       `kubectl -n safe-system create secret generic safe-enroll --from-literal=token='${token}'`,
-      `curl -fsSLk --pinnedpubkey '${installInfo.value.pin}' ${server}/install/agent-k8s.yaml | kubectl apply -f -`,
+      `curl -fsSLk --pinnedpubkey '${installInfo.value.pin}' ${base}/install/agent-k8s.yaml | kubectl apply -f -`,
     ].join('\n')
   }
   const env = [`SAFE_ENROLL_TOKEN='${token}'`]
   if (kind === 'probe') env.push(`SAFE_PROBE_ID='${probeID.value.trim() || '<网段名>'}'`)
-  return `curl -fsSLk --pinnedpubkey '${installInfo.value.pin}' ${server}/install/${kind}.sh | sudo ${env.join(' ')} sh`
+  return `curl -fsSLk --pinnedpubkey '${installInfo.value.pin}' ${base}/install/${kind}.sh | sudo ${env.join(' ')} sh`
 })
 
 async function load() {
@@ -177,6 +211,7 @@ function openDialog() {
 
 async function submit() {
   ;[created.value, installInfo.value] = await Promise.all([api.createEnrollToken({ ...form }), api.installInfo()])
+  server.value = defaultServer(installInfo.value)
   probeID.value = ''
   load()
 }

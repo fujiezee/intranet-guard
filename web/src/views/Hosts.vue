@@ -2,7 +2,10 @@
   <div>
     <div class="page-header">
       <h2>主机审计</h2>
-      <el-button @click="load">刷新</el-button>
+      <div>
+        <el-button @click="upgradesOpen = true">Agent 升级</el-button>
+        <el-button @click="load">刷新</el-button>
+      </div>
     </div>
 
     <el-card shadow="never" :header="`Agent（${agents.length}，在线 ${onlineCount}）`">
@@ -60,6 +63,7 @@
         </el-table-column>
       </el-table>
     </el-card>
+    <AgentUpgrades v-model="upgradesOpen" @update:model-value="(v) => !v && load()" />
   </div>
 </template>
 
@@ -67,6 +71,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { api } from '../api'
 import { formatTime } from '../format'
+import AgentUpgrades from '../components/AgentUpgrades.vue'
 
 const eventLabels = {
   login_success: '登录成功',
@@ -100,6 +105,7 @@ const statusMap = {
 const capLabels = { auth_log: '登录审计', fim: '文件完整性', webshell: 'Webshell', process_scan: '进程扫描', exec_monitor: '命令审计',
   winlog: 'Windows 事件日志' }
 
+const upgradesOpen = ref(false)
 const agents = ref([])
 const events = ref([])
 const loadingEvents = ref(false)

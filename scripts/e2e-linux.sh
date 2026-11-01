@@ -4,7 +4,8 @@
 # 会修改本机系统（创建用户、systemd 服务、/etc/cron.d 等），只应在一次性的 CI 机器或测试虚拟机上运行。
 set -eu
 
-BUNDLE_TGZ=${1:?用法：sudo $0 dist/safe-<版本>-linux-amd64.tar.gz}
+BUNDLE_TGZ=${1:?用法：sudo $0 dist/safe-<版本>-linux-amd64.tar.gz [在线升级测试用的程序目录]}
+UPGRADE_DIR=${2:-} # 含 safe-agent-next（新版本）和 safe-agent-broken（启动即退出的坏版本），见 CI
 [ "$(id -u)" = 0 ] || { echo "需要 root"; exit 1; }
 WORK=$(mktemp -d)
 tar -xzf "$BUNDLE_TGZ" -C "$WORK"
@@ -162,6 +163,37 @@ ok "文件篡改、临时目录执行、访问蜜罐、反弹 shell、下载并�
 wait_for "自检产物已自动清理" 150 "! ls /etc/cron.d/safe-simulation-* /tmp/safe-sim-* /var/www/html/safe-sim-* 2>/dev/null | grep -q ."
 [ "$(api GET '/alerts?status=open' | json 'len([a for a in d if "sim-" in a["message"]])')" = 0 ] && ok "自检告警已自动关闭"
 [ "$(api GET /alerts | json 'len([a for a in d if "sim-" in a["message"] and a.get("incident_id")])')" = 0 ] && ok "自检告警不形成事件"
+
+if [ -n "$UPGRADE_DIR" ]; then
+	step "控制台在线升级 Agent"
+	DL=/opt/safe/downloads
+	agent_ver() { api GET /agents | json "[a for a in d if a['id']=='ci-agent'][0]['version']"; }
+	up_state() { api GET /upgrades | json "[a['upgrade'] for a in d['agents'] if a['id']=='ci-agent'][0]$1"; }
+	[ "$(agent_ver)" = ci ] && ok "当前 Agent 版本 ci（打包时写入的版本号）"
+	[ -L /usr/local/bin/safe-agent ] && [ -x /var/lib/safe-agent/bin/safe-agent ] && ok "Agent 程序位于可写的状态目录（/usr/local/bin 下为链接）"
+	cp /opt/safe/downloads/safe-agent-linux-amd64 "$WORK/agent-ci"
+	install -m 755 "$UPGRADE_DIR/safe-agent-next" "$DL/safe-agent-linux-amd64"
+	echo '{"version": "ci-next"}' >"$DL/manifest.json"
+	[ "$(api GET /upgrades | json 'd["latest"]["version"]')" = ci-next ] && ok "管理中心识别到新版本 ci-next"
+	api POST /upgrades '{"agent_ids":["ci-agent"]}' >/dev/null
+	wait_for "Agent 升级到 ci-next" 120 "[ \"\$(agent_ver)\" = ci-next ]"
+	wait_for "升级状态为成功" 30 "up_state \"['state']\" | grep -qx succeeded"
+	systemctl is-active --quiet safe-agent && ok "服务运行中"
+	[ ! -e /var/lib/safe-agent/bin/safe-agent.prev ] && [ ! -e /var/lib/safe-agent/upgrade-pending ] && ok "确认后旧程序和待确认记录已清理"
+	journalctl -u safe-agent --no-pager | grep -q "agent upgrade completed" && ok "日志记录升级完成"
+
+	install -m 755 "$UPGRADE_DIR/safe-agent-broken" "$DL/safe-agent-linux-amd64"
+	echo '{"version": "ci-broken"}' >"$DL/manifest.json"
+	api POST /upgrades '{"agent_ids":["ci-agent"]}' >/dev/null
+	wait_for "坏版本（能通过自检、运行即退出）被自动回退，升级状态为失败" 180 "up_state \"['state']\" | grep -qx failed"
+	up_state "['detail']" | sed 's/^/    /'
+	up_state "['detail']" | grep -q 自动回退 && ok "失败原因：自动回退"
+	wait_for "Agent 以原版本 ci-next 恢复在线" 60 \
+		"[ \"\$(agent_ver)\" = ci-next ] && api GET /agents | json \"[a for a in d if a['id']=='ci-agent'][0]['status']\" | grep -qx online"
+	# 还原，后续步骤使用原版本
+	install -m 755 "$WORK/agent-ci" "$DL/safe-agent-linux-amd64"
+	echo '{"version": "ci"}' >"$DL/manifest.json"
+fi
 
 step "Agent 停止"
 systemctl stop safe-agent

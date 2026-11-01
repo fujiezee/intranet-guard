@@ -4,11 +4,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -22,6 +24,10 @@ import (
 	"safe/internal/node"
 )
 
+// testCrashOnStart 只用于端到端测试在线升级的自动回退：构建时以
+// -ldflags "-X main.testCrashOnStart=1" 打开，得到一个能通过自检、但正常运行时立即退出的"坏版本"。
+var testCrashOnStart string
+
 func main() {
 	agent.RunSimulationChildIfRequested()
 	serverURL := flag.String("server", "https://127.0.0.1:8443", "management server node endpoint URL; comma-separated for multiple instances (automatic failover)")
@@ -33,7 +39,16 @@ func main() {
 	authLog := flag.String("auth-log", "", "auth log file (default: /var/log/auth.log or /var/log/secure, else journald)")
 	enrollOnly := flag.Bool("enroll-only", false, "enroll with SAFE_ENROLL_TOKEN (if not enrolled yet) and exit; used by the installer")
 	logFile := flag.String("log-file", "", "write logs to this file instead of stderr (used when running as a Windows service)")
+	selfTest := flag.Bool("self-test", false, "check that this binary starts and authenticates to the management server with the local certificate, then exit (run on a new version before upgrading)")
 	flag.Parse()
+
+	if *selfTest {
+		os.Exit(runSelfTest(*serverURL, *statePath))
+	}
+	if testCrashOnStart == "1" {
+		fmt.Fprintln(os.Stderr, "test build: exiting on start (used to test upgrade rollback)")
+		os.Exit(1)
+	}
 
 	if *logFile != "" {
 		f, err := openLog(*logFile)
@@ -121,4 +136,30 @@ func openLog(path string) (io.Writer, error) {
 		_ = os.Rename(path, path+".1")
 	}
 	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+}
+
+// runSelfTest 供在线升级使用：新版本在替换旧版本之前先运行它，确认能启动、能读取本机证书、
+// 能通过管理中心的双向 TLS 认证。输出中的 version= 用于核对下载的确实是预期的版本。
+func runSelfTest(servers, statePath string) int {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	nc, err := node.Connect(ctx, string(model.NodeAgent), "", filepath.Dir(statePath), servers)
+	if err != nil {
+		fmt.Println("self-test failed: load certificate:", err)
+		return 1
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, nc.Servers()[0].String()+"/api/v1/agent/whoami", nil)
+	resp, err := nc.HTTP.Do(req)
+	if err != nil {
+		fmt.Println("self-test failed: connect to management server:", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	var who struct{ ID string }
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&who) != nil || who.ID != nc.ID {
+		fmt.Println("self-test failed: management server rejected this node:", resp.Status)
+		return 1
+	}
+	fmt.Printf("version=%s id=%s ok\n", agent.Version, who.ID)
+	return 0
 }

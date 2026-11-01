@@ -127,6 +127,7 @@ func (s *Store) detectHostAlerts(ctx context.Context, hostIP, agentID string, ev
 					alerts = append(alerts, alert.BruteForceSuccess(hostIP, agentID, ev))
 				}
 				if a, err := netip.ParseAddr(ev.SrcIP); err == nil && (a.IsPrivate() || a.IsLoopback()) {
+					s.logins.add(a.String(), agentID, ev.Time)
 					// 内网来源：短时间登录多台主机即横向移动。同一集群内的互访、运维跳板的登录不计入（见资产组）
 					targets, err := s.lateralTargets(ctx, a, ev.Time)
 					if err != nil {

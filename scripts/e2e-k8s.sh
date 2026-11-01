@@ -4,7 +4,8 @@
 # 真实的攻击动作并检查告警能定位到 Pod。会修改本机系统，只应在一次性的 CI 机器或测试虚拟机上运行。
 set -eu
 
-BUNDLE_TGZ=${1:?用法：sudo $0 dist/safe-<版本>-linux-amd64.tar.gz}
+BUNDLE_TGZ=${1:?用法：sudo $0 dist/safe-<版本>-linux-amd64.tar.gz [在线升级测试用的程序目录]}
+UPGRADE_DIR=${2:-}
 [ "$(id -u)" = 0 ] || { echo "需要 root"; exit 1; }
 K3S_VERSION=v1.31.4+k3s1
 WORK=$(mktemp -d)
@@ -95,6 +96,23 @@ wait_for "自检全部结束" 240 "api GET /simulations | json 'all(s[\"status\"
 api GET /simulations | json '"\n".join("    %s %-9s %s %s" % (s["scenario"], s["status"], s.get("latency_ms",0), s.get("detail","")) for s in d)'
 [ "$(api GET /simulations | json 'sum(s["status"]=="passed" for s in d)')" = 4 ] || fail "自检未全部通过"
 ok "文件篡改、临时目录执行、反弹 shell、下载并执行 4 个场景全部检出"
+
+if [ -n "$UPGRADE_DIR" ]; then
+	step "控制台在线升级 DaemonSet 中的 Agent"
+	DL=/opt/safe/downloads
+	restarts() { kubectl -n safe-system get pods -l app=safe-agent -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}'; }
+	R0=$(restarts)
+	cp "$DL/safe-agent-linux-amd64" "$WORK/agent-ci"
+	install -m 755 "$UPGRADE_DIR/safe-agent-next" "$DL/safe-agent-linux-amd64"
+	echo '{"version": "ci-next"}' >"$DL/manifest.json"
+	api POST /upgrades "{\"agent_ids\":[\"$NODE_NAME\"]}" >/dev/null
+	wait_for "Agent 升级到 ci-next" 180 "[ \"\$(agent_field \"['version']\")\" = ci-next ]"
+	[ "$(restarts)" -gt "$R0" ] && ok "容器重启为新版本（Pod 未重建，重启 $(restarts) 次）"
+	[ "$(kubectl -n safe-system get ds safe-agent -o jsonpath='{.status.numberReady}')" = 1 ] && ok "DaemonSet 仍然就绪"
+	wait_for "升级状态为成功" 30 "api GET /upgrades | json \"[a['upgrade']['state'] for a in d['agents'] if a['id']=='$NODE_NAME'][0]\" | grep -qx succeeded"
+	install -m 755 "$WORK/agent-ci" "$DL/safe-agent-linux-amd64"
+	echo '{"version": "ci"}' >"$DL/manifest.json"
+fi
 
 step "Pod 重建：不需要令牌"
 kubectl -n safe-system delete secret safe-enroll >/dev/null

@@ -21,7 +21,8 @@ import (
 	"safe/internal/tail"
 )
 
-const Version = "0.3.0"
+// Version 由 make release 通过 -ldflags "-X safe/internal/agent.Version=…" 写入；直接 go build 时为 dev。
+var Version = "dev"
 
 // AuthLogCandidates 按顺序尝试的认证日志文件（Debian/Ubuntu、RHEL/CentOS）；都不存在时使用 journald。
 var AuthLogCandidates = []string{"/var/log/auth.log", "/var/log/secure"}
@@ -55,6 +56,9 @@ type Agent struct {
 	http    *http.Client
 	results []model.CommandResult // 指令执行结果，随下一次上报带回
 
+	pendingUpgrade   *pendingUpgrade // 刚升级到本版本、尚未确认（首次上报成功后确认）
+	restartRequested bool            // 已安装新版本，回报结果后退出以重启
+
 	execMu      sync.Mutex
 	execEvents  []model.HostEvent    // 进程监控产生、尚未上报的事件
 	execDropped int                  // 缓冲区满时丢弃的数量
@@ -85,6 +89,7 @@ func New(cfg Config) (*Agent, error) {
 
 func (a *Agent) Run(ctx context.Context) {
 	slog.Info("safe-agent started", "id", a.cfg.AgentID, "server", a.cfg.ServerURL, "version", Version)
+	a.loadUpgradeState()
 	monCtx, stopMon := context.WithCancel(context.Background())
 	defer stopMon()
 	switch runtime.GOOS {
@@ -257,6 +262,7 @@ func (a *Agent) cycle(ctx context.Context) {
 		return
 	}
 	a.results = nil
+	a.commitUpgrade()
 	a.runCommands(ctx, cmds)
 	if a.winBookmarks != nil {
 		next.WinBookmarks = map[string]uint64{}
@@ -358,6 +364,13 @@ func localIPs() []string {
 // runCommands 执行指令后立即回报结果（不等下一个采集周期），处置和自检的结果能尽快出现在控制台。
 // 回报的回复里可能还有新指令，最多连续处理几轮。
 func (a *Agent) runCommands(ctx context.Context, cmds []model.AgentCommand) {
+	defer func() {
+		if a.restartRequested {
+			// 结果已回报（或回报失败：新版本上线后管理中心按版本号确认）。退出后由服务管理器以新版本重启
+			slog.Info("exiting to restart as the upgraded version")
+			os.Exit(RestartExitCode)
+		}
+	}()
 	for round := 0; round < 3 && len(cmds) > 0; round++ {
 		for _, c := range cmds {
 			a.results = append(a.results, a.runCommand(c))

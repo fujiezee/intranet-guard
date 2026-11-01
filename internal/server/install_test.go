@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -114,14 +115,20 @@ func TestInstallEndpoints(t *testing.T) {
 		info.Pin != testPin || info.NodePort != 8443 || len(info.Available) != 2 {
 		t.Errorf("install-info: %d %+v", code, info)
 	}
-	// Windows 命令：主机名取自访问控制台的地址，端口为节点端口；指纹去掉 sha256// 前缀
-	host := strings.TrimPrefix(console.URL, "http://")
-	host = host[:strings.LastIndex(host, ":")]
-	if !strings.Contains(info.WindowsCommand, "DownloadString('https://"+host+":8443/install/agent.ps1')") ||
+	// Windows 命令：管理中心地址由控制台按管理员确认的地址填入（不能用访问控制台时的 localhost）；指纹去掉 sha256// 前缀
+	if !strings.Contains(info.WindowsCommand, "DownloadString('https://__HOSTPORT__/install/agent.ps1')") ||
 		!strings.Contains(info.WindowsCommand, "-eq '"+strings.TrimPrefix(testPin, "sha256//")+"'") ||
 		!strings.Contains(info.WindowsCommand, "SAFE_ENROLL_TOKEN='__TOKEN__'") {
 		t.Errorf("windows command: %s", info.WindowsCommand)
 	}
+	// 本机可供节点连接的地址：不含回环和链路本地地址
+	srv.cfg.NodeHosts = []string{"localhost", "127.0.0.1", "::1", "fe80::1", "node-a.corp", "10.1.2.3"}
+	srv.cfg.NodeURLs = []string{"https://safe.corp:8443"}
+	call(t, console, adminToken, "GET", "/api/v1/install-info", nil, &info)
+	if strings.Join(info.Addresses, ",") != "node-a.corp,10.1.2.3" || strings.Join(info.NodeURLs, ",") != "https://safe.corp:8443" {
+		t.Errorf("addresses %v node_urls %v", info.Addresses, info.NodeURLs)
+	}
+	srv.cfg.NodeHosts, srv.cfg.NodeURLs = nil, nil
 	if code, body := get("/download/safe-agent-windows-amd64.exe", ""); code != http.StatusOK || body != "MZ" {
 		t.Errorf("windows download: %d %q", code, body)
 	}
@@ -177,5 +184,66 @@ func TestWindowsPinMatchesSPKI(t *testing.T) {
 	sum := sha256.Sum256(spki)
 	if got := "sha256//" + base64.StdEncoding.EncodeToString(sum[:]); got != pin {
 		t.Fatalf("powershell pin %s != spki pin %s", got, pin)
+	}
+}
+
+// 升级保护脚本：前 3 次启动只计数，第 4 次启动前换回旧版本并留下回退记录。
+func TestUpgradeGuard(t *testing.T) {
+	dir := t.TempDir()
+	guard := filepath.Join(dir, "upgrade-guard.sh")
+	os.WriteFile(guard, []byte(upgradeGuard), 0o755)
+	exe := filepath.Join(dir, "safe-agent")
+	os.WriteFile(exe, []byte("NEW"), 0o755)
+	os.WriteFile(exe+".prev", []byte("OLD"), 0o755)
+	pending := filepath.Join(dir, "upgrade-pending")
+	os.WriteFile(pending, []byte("0\nupg-0000000a\n0.9.0\n1.0.0\n"+exe+"\n"), 0o600)
+	run := func() {
+		t.Helper()
+		if out, err := exec.Command("sh", guard, dir).CombinedOutput(); err != nil {
+			t.Fatalf("guard: %v %s", err, out)
+		}
+	}
+	for i := 1; i <= 3; i++ {
+		run()
+		b, _ := os.ReadFile(pending)
+		if !strings.HasPrefix(string(b), fmt.Sprintf("%d\nupg-0000000a\n", i)) {
+			t.Fatalf("start %d: pending = %q", i, b)
+		}
+	}
+	if b, _ := os.ReadFile(exe); string(b) != "NEW" {
+		t.Fatal("rolled back too early")
+	}
+	run()
+	if b, _ := os.ReadFile(exe); string(b) != "OLD" {
+		t.Error("not rolled back on 4th start")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "upgrade-rolledback")); err != nil {
+		t.Error("rollback record missing")
+	}
+	if _, err := os.Stat(pending); !os.IsNotExist(err) {
+		t.Error("pending not cleared")
+	}
+	run() // 没有待确认的升级时什么都不做
+}
+
+func TestNodeIndex(t *testing.T) {
+	_, _, st := newTestServerWithStore(t)
+	srv := New(Config{ConsoleScheme: "https", ConsolePort: 443}, st)
+	nodes := httptest.NewServer(srv.NodeHandler())
+	defer nodes.Close()
+	req, _ := http.NewRequest("GET", nodes.URL+"/", nil)
+	req.Host = "10.1.2.3:8443"
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(b), `href="https://10.1.2.3/"`) || !strings.Contains(string(b), "节点接入端口") {
+		t.Errorf("index: %d %s", resp.StatusCode, b)
+	}
+	// 其他路径仍是 404
+	if resp, _ := http.Get(nodes.URL + "/nope"); resp.StatusCode != 404 {
+		t.Errorf("/nope: %d", resp.StatusCode)
 	}
 }

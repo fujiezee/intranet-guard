@@ -25,6 +25,7 @@ type Store struct {
 	dsn    string // 选主需要单独建立连接
 	events EventStore
 	intel  intelCache // 管理中心侧情报匹配用的缓存，按情报版本刷新
+	logins loginWindow
 }
 
 const schema = `
@@ -311,6 +312,19 @@ CREATE TABLE IF NOT EXISTS asset_groups (
 	members    TEXT NOT NULL,
 	note       TEXT NOT NULL DEFAULT '',
 	created_at TIMESTAMP NOT NULL
+);
+CREATE TABLE IF NOT EXISTS settings (
+	key   TEXT PRIMARY KEY,
+	value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agent_upgrades (
+	agent_id     TEXT PRIMARY KEY,
+	attempt      TEXT NOT NULL,
+	target       TEXT NOT NULL,
+	state        TEXT NOT NULL,
+	detail       TEXT NOT NULL,
+	requested_by TEXT NOT NULL,
+	updated_at   TIMESTAMP NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sessions (
 	token_hash TEXT PRIMARY KEY,

@@ -117,9 +117,9 @@ func (s *Store) DeleteGroup(ctx context.Context, id int64) error {
 // lateralTargets 返回某内网来源在横向移动窗口内登录过、且不属于正常运维范围的主机数：
 // 来源属于运维跳板组时为 0；目标与来源同属一个集群组时不计入。
 func (s *Store) lateralTargets(ctx context.Context, src netip.Addr, at time.Time) (int, error) {
-	ids, err := s.events.LoginTargets(ctx, src.String(), at.Add(-alert.LateralWindow), at)
-	if err != nil || len(ids) < alert.LateralTargets {
-		return len(ids), err
+	ids := s.logins.targets(src.String(), at)
+	if len(ids) < alert.LateralTargets {
+		return len(ids), nil
 	}
 	groups, err := s.loadGroups(ctx)
 	if err != nil {

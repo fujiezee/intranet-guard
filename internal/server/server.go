@@ -22,6 +22,7 @@ import (
 	"safe/internal/pki"
 	"safe/internal/scanner"
 	"safe/internal/store"
+	"safe/internal/update"
 )
 
 type Config struct {
@@ -37,6 +38,13 @@ type Config struct {
 	DistDir    string
 	// NodeURLs 是高可用部署时全部实例的节点接入地址（https://host:port），写入一键安装的节点配置
 	NodeURLs []string
+	// NodeHosts 是节点接入证书中的主机名和 IP（节点可以用这些地址连接）
+	NodeHosts []string
+	// Updates 提供新版本检查结果，为 nil 时不检查
+	Updates *update.Checker
+	// ConsoleScheme、ConsolePort 用于在节点接入端口的首页给出控制台地址
+	ConsoleScheme string
+	ConsolePort   int
 
 	// HSTS 为 true 时（控制台经 HTTPS 提供）下发 Strict-Transport-Security，要求浏览器以后只用 HTTPS 访问。
 	HSTS bool
@@ -53,6 +61,7 @@ type Server struct {
 	mux     *http.ServeMux // 控制台与管理 API
 	nodeMux *http.ServeMux // 节点接入（mTLS）
 	limiter *loginLimiter
+	release releaseCache // Agent 升级用的版本清单与策略缓存
 }
 
 func New(cfg Config, st *store.Store) *Server {
@@ -102,6 +111,10 @@ func New(cfg Config, st *store.Store) *Server {
 	s.mux.Handle("PATCH /api/v1/incidents/{id}", admin(s.updateIncident))
 	s.mux.Handle("POST /api/v1/incidents/{id}/notes", admin(s.addIncidentNote))
 	s.mux.Handle("PUT /api/v1/assets/{ip}/meta", admin(s.setAssetMeta))
+	s.mux.Handle("GET /api/v1/version", viewer(s.versionInfo))
+	s.mux.Handle("GET /api/v1/upgrades", viewer(s.listUpgrades))
+	s.mux.Handle("PUT /api/v1/upgrades/policy", admin(s.setUpgradePolicy))
+	s.mux.Handle("POST /api/v1/upgrades", admin(s.queueUpgrades))
 	s.mux.Handle("GET /api/v1/groups", viewer(s.listGroups))
 	s.mux.Handle("POST /api/v1/groups", admin(s.saveGroup))
 	s.mux.Handle("PUT /api/v1/groups/{id}", admin(s.saveGroup))
@@ -147,6 +160,7 @@ func New(cfg Config, st *store.Store) *Server {
 		mux.Handle("GET /api/v1/probe/intel", probe(s.probeIntel))
 		mux.Handle("POST /api/v1/probe/net-findings", probe(s.submitNetFindings))
 		mux.Handle("POST /api/v1/agent/report", agent(s.agentReport))
+		mux.Handle("GET /api/v1/agent/whoami", agent(s.whoami)) // 升级前新版本自检用
 	}
 	nodeRoutes(s.nodeMux,
 		func(h http.HandlerFunc) http.Handler { return s.requireNode(model.NodeProbe, h) },
@@ -156,6 +170,7 @@ func New(cfg Config, st *store.Store) *Server {
 	s.nodeMux.HandleFunc("POST /api/v1/node/renew", s.renew)
 	s.nodeMux.HandleFunc("GET /install/{script}", s.installScript)
 	s.nodeMux.HandleFunc("GET /download/{file}", s.download)
+	s.nodeMux.HandleFunc("GET /{$}", s.nodeIndex)
 	s.nodeMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { writeError(w, http.StatusNotFound, "not found") })
 
 	if cfg.ProbeToken != "" || cfg.AgentToken != "" {

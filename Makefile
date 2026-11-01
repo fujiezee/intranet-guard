@@ -4,6 +4,7 @@ PG_DSN ?= postgres://safe@127.0.0.1:54329/safe_test?sslmode=disable
 CH_URL ?= clickhouse://default:@127.0.0.1:8123
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+AGENT_VERSION_FLAG = -X safe/internal/agent.Version=$(VERSION)
 
 .PHONY: test test-pg test-ch build web release
 
@@ -31,15 +32,17 @@ release: web
 	rm -rf dist && mkdir -p dist/downloads
 	for t in linux/amd64 linux/arm64; do \
 		os=$${t%/*}; arch=$${t#*/}; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags='-s -w' -o dist/downloads/safe-agent-$$os-$$arch ./cmd/agent; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags='-s -w $(AGENT_VERSION_FLAG)' -o dist/downloads/safe-agent-$$os-$$arch ./cmd/agent; \
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags='-s -w' -o dist/downloads/safe-probe-$$os-$$arch ./cmd/probe; \
 	done
 	for arch in amd64 arm64; do \
-		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch go build -trimpath -ldflags='-s -w' -o dist/downloads/safe-agent-windows-$$arch.exe ./cmd/agent; \
+		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch go build -trimpath -ldflags='-s -w $(AGENT_VERSION_FLAG)' -o dist/downloads/safe-agent-windows-$$arch.exe ./cmd/agent; \
 	done
+	@# 管理中心据此判断节点程序的最新版本，用于控制台升级 Agent
+	printf '{"version": "%s"}\n' '$(VERSION)' > dist/downloads/manifest.json
 	for arch in amd64 arm64; do \
 		d=dist/safe-$(VERSION)-linux-$$arch; mkdir -p $$d; \
-		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags='-s -w' -o $$d/safe-server ./cmd/server; \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags='-s -w -X safe/internal/server.Version=$(VERSION)' -o $$d/safe-server ./cmd/server; \
 		cp -R web/dist $$d/web; cp -R dist/downloads $$d/downloads; \
 		install -m 755 scripts/install.sh scripts/backup.sh $$d/; \
 		tar -czf $$d.tar.gz -C dist safe-$(VERSION)-linux-$$arch; \

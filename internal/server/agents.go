@@ -47,6 +47,14 @@ func (s *Server) agentReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cmds = append(cmds, actions...)
+	up, err := s.upgradeCommand(r, rep.Agent)
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	if up != nil {
+		cmds = append(cmds, *up)
+	}
 	writeJSON(w, http.StatusOK, model.AgentReportResponse{Commands: cmds})
 }
 

@@ -14,8 +14,16 @@ PIN='{{.Pin}}'
 KIND='{{.Kind}}'
 NAME="safe-$KIND"
 R=${SAFE_TEST_ROOT:-} # 仅用于测试：把系统路径放到临时目录下
-BIN="$R/usr/local/bin/$NAME"
 STATE="$R/var/lib/$NAME"
+{{- if eq .Kind "agent"}}
+# Agent 程序放在可写的状态目录中，才能在控制台在线升级（systemd 沙箱中 /usr/local/bin 只读）；
+# /usr/local/bin/safe-agent 保留为指向它的链接，方便在命令行使用
+BIN="$STATE/bin/$NAME"
+LINK="$R/usr/local/bin/$NAME"
+{{- else}}
+BIN="$R/usr/local/bin/$NAME"
+LINK=""
+{{- end}}
 ENV_FILE="$R/etc/$NAME.env"
 UNIT="$R/etc/systemd/system/$NAME.service"
 
@@ -29,7 +37,8 @@ command -v systemctl >/dev/null 2>&1 || die "需要 systemd"
 if [ "${SAFE_ACTION:-install}" = uninstall ]; then
 	say "卸载 $NAME"
 	systemctl disable --now "$NAME" 2>/dev/null || true
-	rm -f "$UNIT" "$BIN" "$ENV_FILE"
+	rm -f "$UNIT" "$BIN" "$BIN.prev" "$ENV_FILE"
+	[ -n "$LINK" ] && rm -f "$LINK"
 	systemctl daemon-reload
 	say "已卸载。证书和状态保留在 ${STATE}（彻底清除：rm -rf ${STATE}，并在控制台吊销该节点）"
 	exit 0
@@ -65,10 +74,22 @@ else
 fi
 chmod 755 "$TMP"
 systemctl stop "$NAME" 2>/dev/null || true
+install -d -m 700 "$STATE"
 install -d "$(dirname "$BIN")" "$(dirname "$UNIT")"
 install -m 755 "$TMP" "$BIN"
+rm -f "$BIN.prev" "$STATE/upgrade-pending"
+{{- if eq .Kind "agent"}}
+# 旧版安装把程序放在 /usr/local/bin，换成指向新位置的链接
+install -d "$(dirname "$LINK")"
+rm -f "$LINK"
+ln -s "$BIN" "$LINK"
 
-install -d -m 700 "$STATE"
+# 升级保护：每次启动前计数；在线升级后新版本连续 3 次没能完成首次上报（启动即退出）时，
+# 第 4 次启动前换回旧版本，并留下 upgrade-rolledback，旧版本启动后向管理中心报告升级失败
+cat >"$STATE/bin/upgrade-guard.sh" <<'GUARD'
+{{.Guard}}GUARD
+chmod 755 "$STATE/bin/upgrade-guard.sh"
+{{- end}}
 ARGS="-server $SERVERS -state $STATE/state.json"
 {{- if eq .Kind "agent"}}
 [ -n "${SAFE_AGENT_ID:-}" ] && ARGS="$ARGS -id $SAFE_AGENT_ID"
@@ -101,6 +122,9 @@ Wants=network-online.target
 
 [Service]
 EnvironmentFile=$ENV_FILE
+{{- if eq .Kind "agent"}}
+ExecStartPre=-/bin/sh $STATE/bin/upgrade-guard.sh $STATE
+{{- end}}
 ExecStart=$BIN $ARGS
 Restart=always
 RestartSec=5

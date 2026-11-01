@@ -60,8 +60,10 @@ spec:
               esac
               mkdir -p /state/bin
               curl -fsSk --pinnedpubkey "$PIN" -o /state/bin/safe-agent.new "$SERVER/download/safe-agent-linux-$A"
+              curl -fsSk --pinnedpubkey "$PIN" -o /state/bin/upgrade-guard.sh "$SERVER/install/upgrade-guard.sh"
               chmod 755 /state/bin/safe-agent.new
               mv /state/bin/safe-agent.new /state/bin/safe-agent
+              rm -f /state/bin/safe-agent.prev /state/upgrade-pending
           volumeMounts:
             - {name: state, mountPath: /state}
       containers:
@@ -80,11 +82,12 @@ spec:
             - --ipc
             - --net
             - --
-            - /var/lib/safe-agent-k8s/bin/safe-agent
-            - -server
+            - /bin/sh
+            - -c
+            # 先运行升级保护（在线升级后新版本反复退出时换回旧版本），再以 exec 启动 Agent（接收停止信号）
+            - sh /var/lib/safe-agent-k8s/bin/upgrade-guard.sh /var/lib/safe-agent-k8s;
+              exec /var/lib/safe-agent-k8s/bin/safe-agent -server "$0" -state /var/lib/safe-agent-k8s/state.json
             - "{{.Servers}}"
-            - -state
-            - /var/lib/safe-agent-k8s/state.json
           resources:
             requests: {cpu: 20m, memory: 64Mi}
             limits: {cpu: 200m, memory: 256Mi}

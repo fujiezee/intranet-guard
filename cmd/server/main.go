@@ -27,6 +27,7 @@ import (
 	"safe/internal/pki"
 	"safe/internal/server"
 	"safe/internal/store"
+	"safe/internal/update"
 )
 
 func main() {
@@ -44,6 +45,7 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "console HTTPS certificate file (PEM)")
 	tlsKey := flag.String("tls-key", "", "console HTTPS private key file (PEM)")
 	tlsInternal := flag.Bool("tls-internal", false, "serve the console over HTTPS with a certificate from the internal CA (admins must trust pki/ca.crt)")
+	updateURL := flag.String("update-url", update.DefaultURL, "where to check for new releases every 6 hours (GitHub releases API); empty to disable")
 	nodeURLs := flag.String("node-urls", "", "comma-separated node endpoint URLs of all instances (high availability); written into node install commands so nodes fail over between them")
 	distDir := flag.String("dist-dir", "", "directory with safe-agent/safe-probe linux binaries served to the one-line node installer")
 	trustedProxies := flag.String("trusted-proxies", "", "comma-separated CIDRs of reverse proxies whose X-Forwarded-For is trusted, e.g. 127.0.0.1/32")
@@ -118,6 +120,7 @@ func main() {
 		cfg.NodePort, _ = strconv.Atoi(port)
 	}
 	cfg.DistDir = *distDir
+	cfg.NodeHosts = hosts
 	if *nodeURLs != "" {
 		list, err := node.ParseServers(*nodeURLs)
 		if err != nil {
@@ -162,6 +165,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	// 节点接入端口的首页提示控制台的地址
+	cfg.ConsoleScheme = "http"
+	if consoleTLS {
+		cfg.ConsoleScheme = "https"
+	}
+	if _, port, err := net.SplitHostPort(*addr); err == nil {
+		cfg.ConsolePort, _ = strconv.Atoi(port)
+	}
+	cfg.Updates = update.New(*updateURL, server.Version)
 	handler := server.New(cfg, st)
 	srv := &http.Server{
 		Addr:              *addr,
@@ -191,6 +203,7 @@ func main() {
 	leader := st.NewLeader()
 	go leader.Run(ctx)
 	go maintenance(ctx, st, handler, *taskTimeout, leader.IsLeader)
+	go cfg.Updates.Run(ctx)
 	go notify.Run(ctx, st, 10*time.Second, leader.IsLeader)
 	go func() {
 		<-ctx.Done()
@@ -208,7 +221,7 @@ func main() {
 		}
 	}()
 
-	slog.Info("safe-server listening", "addr", *addr, "https", consoleTLS, "db", redactDSN(*dbPath))
+	slog.Info("safe-server listening", "version", server.Version, "addr", *addr, "https", consoleTLS, "db", redactDSN(*dbPath))
 	var serveErr error
 	if consoleTLS {
 		serveErr = srv.ListenAndServeTLS(*tlsCert, *tlsKey) // -tls-internal 时证书已在 TLSConfig 中，参数为空
@@ -289,6 +302,11 @@ func maintenance(ctx context.Context, st *store.Store, srv *server.Server, taskT
 				slog.Warn("expire simulations", "err", err)
 			} else if n > 0 {
 				slog.Warn("attack simulations failed: detection did not fire in time", "count", n)
+			}
+			if n, err := st.ExpireUpgrades(ctx, time.Now()); err != nil {
+				slog.Warn("expire upgrades", "err", err)
+			} else if n > 0 {
+				slog.Warn("agent upgrades timed out", "count", n)
 			}
 			if n, err := st.ExpireActions(ctx, time.Now()); err != nil {
 				slog.Warn("expire actions", "err", err)
