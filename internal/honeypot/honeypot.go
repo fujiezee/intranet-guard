@@ -297,10 +297,17 @@ func Run(ctx context.Context, m *Manager, fetch func(context.Context, map[int]st
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
-		if cfg, err := fetch(ctx, m.Status()); err != nil {
+		before := m.Status()
+		if cfg, err := fetch(ctx, before); err != nil {
 			slog.Warn("fetch probe config", "err", err)
 		} else {
 			m.Apply(cfg)
+			// 监听状态变了就立即再上报一次，控制台不必等下一个周期才看到端口是否启动成功
+			if after := m.Status(); !sameStatus(before, after) {
+				if _, err := fetch(ctx, after); err != nil {
+					slog.Warn("report honeypot status", "err", err)
+				}
+			}
 		}
 		select {
 		case <-ctx.Done():
@@ -308,4 +315,16 @@ func Run(ctx context.Context, m *Manager, fetch func(context.Context, map[int]st
 		case <-t.C:
 		}
 	}
+}
+
+func sameStatus(a, b map[int]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }

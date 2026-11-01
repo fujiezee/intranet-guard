@@ -1,7 +1,8 @@
-# 运行时数据与密钥，不要提交
-safe.db*
-pki/
-bin/
-data/
-backups/
-dist/
+# 运行时数据与密钥，不要提交。都以 / 开头，只匹配仓库根目录：
+# 不带 / 的 pki/ 会连同源码目录 internal/pki 一起忽略。
+/safe.db*
+/pki/
+/bin/
+/data/
+/backups/
+/dist/

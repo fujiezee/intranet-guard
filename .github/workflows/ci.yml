@@ -35,6 +35,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - name: 没有源码被 .gitignore 忽略
+        run: |
+          ignored=$(git ls-files --others --ignored --exclude-standard -- '*.go' '*.vue' '*.js' '*.sh' '*.tmpl' | grep -v '^web/node_modules/' || true)
+          if [ -n "$ignored" ]; then echo "被忽略的源码文件："; echo "$ignored"; exit 1; fi
       - name: go vet
         run: go vet ./...
       - name: gofmt

@@ -88,6 +88,19 @@ func TestHoneypotAndSimulation(t *testing.T) {
 		t.Errorf("honeypot asset not flagged")
 	}
 
+	// 蜜罐没有运行时，含蜜罐场景的请求整体拒绝，不会只创建一部分。
+	call(t, ts, adminToken, "PUT", "/api/v1/honeypots/seg-a", model.HoneypotConfig{Enabled: false, Services: cfg.Services}, nil)
+	if code := call(t, ts, adminToken, "POST", "/api/v1/simulations",
+		createSimulationsRequest{AgentID: "web01", Scenarios: []string{"fim", "honeypot"}}, nil); code != http.StatusBadRequest {
+		t.Errorf("simulation without honeypot: %d", code)
+	}
+	var none []model.Simulation
+	call(t, ts, adminToken, "GET", "/api/v1/simulations", nil, &none)
+	if len(none) != 0 {
+		t.Errorf("partial simulations created: %+v", none)
+	}
+	call(t, ts, adminToken, "PUT", "/api/v1/honeypots/seg-a", cfg, nil)
+
 	// 4. 下发三个自检场景，Agent 上报时领取。
 	var sims []model.Simulation
 	if code := call(t, ts, adminToken, "POST", "/api/v1/simulations",

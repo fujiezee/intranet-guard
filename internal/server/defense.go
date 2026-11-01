@@ -158,21 +158,25 @@ func (s *Server) createSimulations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "agent_id and scenarios are required")
 		return
 	}
-	created := []model.Simulation{}
+	// 先全部校验（包括为蜜罐场景选目标），任何一项不满足都不创建，避免只创建了一部分
+	target := ""
 	for _, sc := range req.Scenarios {
 		if _, ok := simulate.Get(sc); !ok {
 			writeError(w, http.StatusBadRequest, "unknown scenario "+sc)
 			return
 		}
-	}
-	for _, sc := range req.Scenarios {
-		params := map[string]string{}
-		if sc == simulate.HoneypotAccess {
-			target, err := s.honeypotTarget(r)
-			if err != nil {
+		if sc == simulate.HoneypotAccess && target == "" {
+			var err error
+			if target, err = s.honeypotTarget(r); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
+		}
+	}
+	created := []model.Simulation{}
+	for _, sc := range req.Scenarios {
+		params := map[string]string{}
+		if sc == simulate.HoneypotAccess {
 			params["target"] = target
 		}
 		sim, err := s.store.CreateSimulation(r.Context(), req.AgentID, sc, params, userFrom(r.Context()).Username)
