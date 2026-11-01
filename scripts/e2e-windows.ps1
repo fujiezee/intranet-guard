@@ -96,7 +96,8 @@ try {
 	WaitFor '命令审计生效（收到进程创建事件 4688）' 60 { @((Agent).capabilities) -contains 'exec_monitor' }
 
 	Step '真实安全事件 → 告警'
-	1..12 | ForEach-Object { Quiet 'net use \\127.0.0.1\IPC$ /user:safe-e2e-nouser Wr0ngPass!1' }
+	# 每次换一个用户名：相同凭据重复连接时 SMB 客户端直接返回缓存的失败，不会再次发起登录
+	1..12 | ForEach-Object { Quiet "net use \\127.0.0.1\IPC$ /user:safe-e2e-nouser$_ Wr0ngPass!1" }
 	WaitFor '连续登录失败 → 暴力破解告警' 60 { @(Alerts 'ssh_bruteforce' | Where-Object { $_.message -like '*暴力破解*' }).Count -ge 1 }
 	# 诊断：Agent 实际上报的登录失败记录（来源地址为空时管理中心不计入爆破统计）
 	@(Api GET '/host-events?type=login_failed') | Select-Object -First 3 | ForEach-Object { Write-Host "    登录失败记录：用户 $($_.user) 来源 [$($_.src_ip)] $($_.detail)" }
