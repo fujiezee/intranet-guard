@@ -17,7 +17,7 @@ func vulnScan(t *testing.T, ts *httptest.Server, adminToken string, assets []mod
 	t.Helper()
 	var task model.ScanTask
 	if code := call(t, ts, adminToken, "POST", "/api/v1/tasks", createTaskRequest{ProbeID: "seg-a", Targets: []string{"10.0.0.5"},
-		Ports: []int{22, 6379}, Kind: model.TaskVuln, WeakPassword: true}, &task); code != http.StatusCreated {
+		Ports: []int{22, 6379}, Kind: model.TaskVuln}, &task); code != http.StatusCreated {
 		t.Fatalf("create vuln task: %d", code)
 	}
 	call(t, ts, probeToken, "GET", "/api/v1/probe/tasks?probe_id=seg-a", nil, nil)
@@ -120,10 +120,10 @@ func TestVulnLifecycle(t *testing.T) {
 		t.Errorf("open vulns in stats = %v (ssh is ignored, redis fixed)", st.OpenVulns)
 	}
 
-	// 校验：弱口令检测只能用于漏洞检测任务；只读用户不能修改漏洞状态。
+	// 校验：弱口令检测只能经安全验证发起；只读用户不能修改漏洞状态。
 	if code := call(t, ts, adminToken, "POST", "/api/v1/tasks", createTaskRequest{ProbeID: "seg-a", Targets: []string{"10.0.0.5"},
 		WeakPassword: true}, nil); code != http.StatusBadRequest {
-		t.Errorf("weak_password on discovery task: %d", code)
+		t.Errorf("weak_password on scan task: %d", code)
 	}
 	call(t, ts, adminToken, "POST", "/api/v1/users", createUserRequest{Username: "v", Password: "viewer-password", Role: model.RoleViewer}, nil)
 	viewer := login(t, ts, "v", "viewer-password")

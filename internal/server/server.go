@@ -120,6 +120,13 @@ func New(cfg Config, st *store.Store) *Server {
 	s.mux.Handle("PUT /api/v1/groups/{id}", admin(s.saveGroup))
 	s.mux.Handle("DELETE /api/v1/groups/{id}", admin(s.deleteGroup))
 
+	s.mux.Handle("GET /api/v1/validation/scopes", viewer(s.listValidationScopes))
+	s.mux.Handle("POST /api/v1/validation/scopes", admin(s.addValidationScope))
+	s.mux.Handle("DELETE /api/v1/validation/scopes/{id}", admin(s.deleteValidationScope))
+	s.mux.Handle("GET /api/v1/validation/runs", viewer(s.listValidationRuns))
+	s.mux.Handle("POST /api/v1/validation/runs", admin(s.createValidationRun))
+	s.mux.Handle("POST /api/v1/validation/runs/{id}/approve", admin(s.approveValidationRun))
+	s.mux.Handle("GET /api/v1/validation/runs/{id}/report", viewer(s.validationReport))
 	s.mux.Handle("GET /api/v1/actions", viewer(s.listActions))
 	s.mux.Handle("POST /api/v1/actions", admin(s.createAction))
 	s.mux.Handle("POST /api/v1/actions/{id}/approve", admin(s.approveAction))
@@ -273,8 +280,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "kind must be discovery or vuln")
 		return
 	}
-	if req.WeakPassword && req.Kind != model.TaskVuln {
-		writeError(w, http.StatusBadRequest, "weak_password requires kind vuln")
+	// 弱口令检测会真实尝试登录，只能经安全验证发起：有授权范围和审批
+	if req.WeakPassword {
+		writeError(w, http.StatusBadRequest, "weak password checks must be started from Security Validation")
 		return
 	}
 	if len(req.Ports) == 0 {

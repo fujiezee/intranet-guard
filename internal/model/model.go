@@ -311,6 +311,41 @@ type Vuln struct {
 
 const AlertVuln AlertType = "vuln"
 
+// ValidationScope 是允许做安全验证的地址范围（白名单）。
+type ValidationScope struct {
+	ID        int64     `json:"id"`
+	CIDR      string    `json:"cidr"`
+	Note      string    `json:"note"`
+	CreatedBy string    `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// 安全验证任务的状态
+const (
+	ValAwaitingApproval = "awaiting_approval"
+	ValRunning          = "running"
+	ValDone             = "done"
+	ValFailed           = "failed"
+	ValExpired          = "expired"
+)
+
+// ValidationRun 是一次针对授权范围内资产的安全验证。
+type ValidationRun struct {
+	ID           string     `json:"id"`
+	Name         string     `json:"name"`
+	ProbeID      string     `json:"probe_id"`
+	Targets      []string   `json:"targets"`
+	Ports        []int      `json:"ports"`
+	WeakPassword bool       `json:"weak_password"`
+	Status       string     `json:"status"`
+	TaskID       string     `json:"task_id,omitempty"`
+	Error        string     `json:"error,omitempty"`
+	CreatedBy    string     `json:"created_by"`
+	ApprovedBy   string     `json:"approved_by,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
+}
+
 type ChannelType string
 
 const (

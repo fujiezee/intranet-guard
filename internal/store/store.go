@@ -314,6 +314,27 @@ CREATE TABLE IF NOT EXISTS asset_groups (
 	note       TEXT NOT NULL DEFAULT '',
 	created_at TIMESTAMP NOT NULL
 );
+CREATE TABLE IF NOT EXISTS validation_scopes (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	cidr       TEXT NOT NULL UNIQUE,
+	note       TEXT NOT NULL,
+	created_by TEXT NOT NULL,
+	created_at TIMESTAMP NOT NULL
+);
+CREATE TABLE IF NOT EXISTS validation_runs (
+	id            TEXT PRIMARY KEY,
+	name          TEXT NOT NULL,
+	probe_id      TEXT NOT NULL,
+	targets       TEXT NOT NULL,
+	ports         TEXT NOT NULL,
+	weak_password BOOLEAN NOT NULL,
+	status        TEXT NOT NULL,
+	task_id       TEXT NOT NULL DEFAULT '',
+	created_by    TEXT NOT NULL,
+	approved_by   TEXT NOT NULL DEFAULT '',
+	created_at    TIMESTAMP NOT NULL,
+	started_at    TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS settings (
 	key   TEXT PRIMARY KEY,
 	value TEXT NOT NULL

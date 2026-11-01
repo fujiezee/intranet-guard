@@ -15,6 +15,7 @@
         <el-menu-item index="/intel">{{ t('威胁情报') }}</el-menu-item>
         <el-menu-item index="/honeypot">{{ t('蜜罐') }}</el-menu-item>
         <el-menu-item index="/detection">{{ t('检测验证') }}</el-menu-item>
+        <el-menu-item index="/validation">{{ t('安全验证') }}</el-menu-item>
         <el-menu-item index="/tasks">{{ t('扫描任务') }}</el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/nodes">{{ t('节点管理') }}</el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/users">{{ t('用户管理') }}</el-menu-item>

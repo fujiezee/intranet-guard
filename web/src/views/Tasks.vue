@@ -50,11 +50,8 @@
           <el-input v-model="form.ports" :placeholder="t('逗号分隔，留空使用内置常见高危端口')" />
         </el-form-item>
         <el-form-item v-if="form.kind === 'vuln'" :label="t('弱口令')">
-          <el-switch v-model="form.weak_password" />
-          <span class="hint">{{ t('尝试少量常见口令（SSH / FTP / Redis）') }}</span>
+          <span class="hint">{{ t('弱口令检测已移到“安全验证”页，需要授权范围和审批') }}</span>
         </el-form-item>
-        <el-alert v-if="form.weak_password" type="warning" :closable="false" show-icon style="margin: -6px 0 16px"
-          :title="t('会产生真实的登录失败记录，可能触发账号锁定策略或其他安全设备告警，请先与系统负责人确认。')" />
         <el-form-item :label="t('基线扫描')">
           <el-switch v-model="form.baseline" />
           <span class="hint">{{ t('首次扫描新网段时开启：只建立资产台账，不产生告警') }}</span>
@@ -87,7 +84,7 @@ const tasks = ref([])
 const loading = ref(false)
 const dialog = ref(false)
 const submitting = ref(false)
-const form = reactive({ kind: 'discovery', probe_id: '', targets: '', ports: '', baseline: false, weak_password: false })
+const form = reactive({ kind: 'discovery', probe_id: '', targets: '', ports: '', baseline: false })
 
 async function load() {
   loading.value = true
@@ -99,7 +96,7 @@ async function load() {
 }
 
 function openDialog() {
-  Object.assign(form, { kind: 'discovery', probe_id: '', targets: '', ports: '', baseline: false, weak_password: false })
+  Object.assign(form, { kind: 'discovery', probe_id: '', targets: '', ports: '', baseline: false })
   dialog.value = true
 }
 
@@ -122,7 +119,6 @@ async function submit() {
       ports,
       baseline: form.baseline,
       kind: form.kind,
-      weak_password: form.kind === 'vuln' && form.weak_password,
     })
     ElMessage.success(t('任务已创建，等待探针领取'))
     dialog.value = false

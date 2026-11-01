@@ -12,6 +12,7 @@ const router = createRouter({
     { path: '/intel', name: 'intel', component: () => import('./views/Intel.vue') },
     { path: '/honeypot', name: 'honeypot', component: () => import('./views/Honeypot.vue') },
     { path: '/detection', name: 'detection', component: () => import('./views/Detection.vue') },
+    { path: '/validation', name: 'validation', component: () => import('./views/Validation.vue') },
     { path: '/ids', name: 'ids', component: () => import('./views/IDS.vue') },
     { path: '/response', name: 'response', component: () => import('./views/Response.vue') },
     { path: '/hosts', name: 'hosts', component: () => import('./views/Hosts.vue') },
