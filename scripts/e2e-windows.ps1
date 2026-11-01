@@ -98,6 +98,8 @@ try {
 	Step '真实安全事件 → 告警'
 	1..12 | ForEach-Object { Quiet 'net use \\127.0.0.1\IPC$ /user:safe-e2e-nouser Wr0ngPass!1' }
 	WaitFor '连续登录失败 → 暴力破解告警' 60 { @(Alerts 'ssh_bruteforce' | Where-Object { $_.message -like '*暴力破解*' }).Count -ge 1 }
+	# 诊断：Agent 实际上报的登录失败记录（来源地址为空时管理中心不计入爆破统计）
+	@(Api GET '/host-events?type=login_failed') | Select-Object -First 3 | ForEach-Object { Write-Host "    登录失败记录：用户 $($_.user) 来源 [$($_.src_ip)] $($_.detail)" }
 
 	$enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('Write-Output safe-e2e'))
 	& powershell.exe -NoProfile -EncodedCommand $enc | Out-Null
@@ -105,7 +107,8 @@ try {
 	WaitFor '编码的 PowerShell → 中危告警' 60 { @(Alerts 'suspicious_command' | Where-Object { $_.message -like '*编码的 PowerShell*' -and $_.severity -eq 'medium' }).Count -ge 1 }
 	WaitFor '清除事件日志 → 高危告警' 60 { @(Alerts 'suspicious_command' | Where-Object { $_.message -like '*清除日志*' -and $_.severity -eq 'high' }).Count -ge 1 }
 
-	$userPw = 'Aa1!' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+	# 密码不超过 14 位：更长时 net user 会询问是否继续（兼容旧系统），非交互执行时默认放弃
+	$userPw = 'Aa1!' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 	Quiet "net user safe-e2e-u $userPw /add"
 	Quiet 'net localgroup Administrators safe-e2e-u /add'
 	WaitFor '新建账户 → 中危告警' 60 { @(Alerts 'account_change' | Where-Object { $_.message -like '*新建账户*safe-e2e-u*' }).Count -ge 1 }
