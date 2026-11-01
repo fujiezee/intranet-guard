@@ -65,7 +65,9 @@ func TestClaimPendingAlerts(t *testing.T) {
 					}
 				}
 				mu.Unlock()
-				st.MarkNotified(ctx, ids)
+				if err := st.MarkNotified(ctx, ids); err != nil {
+					t.Errorf("mark notified: %v", err)
+				}
 			}
 		}()
 	}

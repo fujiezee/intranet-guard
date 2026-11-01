@@ -24,13 +24,14 @@
     </el-aside>
     <el-container>
       <el-header class="header">
-        <!-- 跳到使用指南中当前页面对应的章节（章节锚点与路由名称一致） -->
         <span v-if="ver" class="version">
-          v{{ ver.server.current }}
+          {{ t('当前 {p0}', { p0: currentVersion }) }}
           <el-tag v-if="ver.server.update_available" size="small" type="warning" effect="dark" class="update" @click="updateOpen = true">
             {{ t('新版本 v{p0}', { p0: ver.server.latest }) }}
           </el-tag>
+          <span v-else :title="ver.server.check_error">· {{ latestVersion }}</span>
         </span>
+        <!-- 跳到使用指南中当前页面对应的章节（章节锚点与路由名称一致） -->
         <router-link v-if="route.name !== 'help'" class="help-link" :to="{ path: '/help', hash: `#${route.name}` }">{{ t('帮助') }}</router-link>
         <el-button class="lang" size="small" link @click="setLang(lang === 'en' ? 'zh' : 'en')">{{ lang === 'en' ? '中文' : 'English' }}</el-button>
         <el-dropdown @command="onCommand">
@@ -64,7 +65,7 @@
     </el-dialog>
     <el-dialog v-if="ver" v-model="updateOpen" :title="t('新版本 v{p0}', { p0: ver.server.latest })" width="680px">
       <p>{{ t('当前管理中心版本 v{p0}', { p0: ver.server.current }) }}<span v-if="ver.server.published_at">{{ t('，新版本发布于 {p0}', { p0: formatTime(ver.server.published_at) }) }}</span>。</p>
-      <div class="notes" v-html="notes" />
+      <pre v-if="ver.server.release_notes" class="notes">{{ ver.server.release_notes }}</pre>
       <h4>{{ t('升级步骤') }}</h4>
       <ol class="steps">
         <li>{{ t('从') }}<a :href="ver.server.release_url" target="_blank" rel="noopener">{{ t('发布页') }}</a>{{ t('下载与管理中心架构对应的安装包（safe-版本-linux-amd64 / arm64.tar.gz）。') }}</li>
@@ -78,16 +79,46 @@
 
 <script setup>
 import { t, lang, setLang } from './i18n'
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from './api'
 import { auth, clearSession } from './auth'
+import { formatTime } from './format'
 
 const route = useRoute()
 const router = useRouter()
 const pwDialog = ref(false)
 const pwForm = reactive({ old: '', new: '', confirm: '' })
+const ver = ref(null)
+const updateOpen = ref(false)
+let verTimer = null
+
+// 开发构建的版本号是 dev，不加 v 前缀
+const currentVersion = computed(() => {
+  const v = ver.value.server.current
+  return /^\d/.test(v) ? `v${v}` : v
+})
+const latestVersion = computed(() => {
+  const s = ver.value.server
+  if (s.latest) return t('最新 v{p0}', { p0: s.latest })
+  if (s.disabled) return t('最新：未启用检查')
+  if (s.check_error) return t('最新：检查失败')
+  return s.checked_at ? t('最新：暂无发布') : t('最新：检查中')
+})
+
+async function loadVersion() {
+  ver.value = await api.version().catch(() => ver.value)
+}
+
+// 登录页没有会话，登录后才加载；管理中心启动后稍等才完成第一次检查，所以定时刷新
+watch(() => auth.token, (token) => {
+  clearInterval(verTimer)
+  ver.value = null
+  if (!token) return
+  loadVersion()
+  verTimer = setInterval(loadVersion, 60000)
+}, { immediate: true })
 
 async function onCommand(cmd) {
   if (cmd === 'password') {
@@ -115,6 +146,9 @@ async function changePassword() {
 </script>
 
 <style scoped>
+.version { display: flex; align-items: center; gap: 6px; margin-right: 16px; color: #909399; font-size: 13px; }
+.update { cursor: pointer; }
+.notes { max-height: 260px; overflow: auto; padding: 8px 12px; background: #f5f7fa; border-radius: 3px; font-size: 13px; white-space: pre-wrap; }
 .help-link { margin-right: 16px; color: #409eff; font-size: 14px; text-decoration: none; }
 .layout { height: 100%; }
 .aside { background: #1f2d3d; }

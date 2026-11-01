@@ -131,13 +131,18 @@ func (s *Store) MarkNotified(ctx context.Context, ids []int64) error {
 // 领取带租约：并发的推送方（多实例切换的瞬间）领到互不重叠的告警，不会重复推送；领取后实例宕机、
 // 没来得及标记已推送的告警，租约过期后被重新领取，不会漏推。外层 WHERE 重复判断领取条件：
 // PostgreSQL 并发更新同一行时会按最新版本重新判断外层条件，已被别人领取的行因此被排除。
+// PostgreSQL 上跳过别人正在更新的行：领取不等待任何行锁，不会和其他领取或 MarkNotified 互相死锁。
 func (s *Store) ClaimPendingAlerts(ctx context.Context, limit int, lease time.Duration) ([]model.Alert, error) {
 	now := time.Now().UTC()
 	expired := now.Add(-lease)
+	skipLocked := ""
+	if s.db.d == dialectPostgres {
+		skipLocked = " FOR UPDATE SKIP LOCKED"
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		UPDATE alerts SET notify_claimed_at = ?
 		WHERE id IN (
-			SELECT id FROM alerts WHERE NOT notified AND (notify_claimed_at IS NULL OR notify_claimed_at < ?) ORDER BY id LIMIT ?
+			SELECT id FROM alerts WHERE NOT notified AND (notify_claimed_at IS NULL OR notify_claimed_at < ?) ORDER BY id LIMIT ?`+skipLocked+`
 		) AND NOT notified AND (notify_claimed_at IS NULL OR notify_claimed_at < ?)
 		RETURNING id, type, severity, ip, port, message, status, acked_by, resolution, created_at, updated_at`,
 		now, expired, limit, expired)

@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "check:guide": "node scripts/check-guide.mjs",
-    "check:i18n": "node scripts/check-i18n.mjs"
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:refs": "node scripts/check-template-refs.mjs"
   },
   "dependencies": {
     "element-plus": "^2.14.7",
