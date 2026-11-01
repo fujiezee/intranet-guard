@@ -38,7 +38,7 @@ release: web
 		d=dist/safe-$(VERSION)-linux-$$arch; mkdir -p $$d; \
 		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags='-s -w' -o $$d/safe-server ./cmd/server; \
 		cp -R web/dist $$d/web; cp -R dist/downloads $$d/downloads; \
-		cp scripts/install.sh scripts/backup.sh $$d/; \
+		install -m 755 scripts/install.sh scripts/backup.sh $$d/; \
 		tar -czf $$d.tar.gz -C dist safe-$(VERSION)-linux-$$arch; \
 	done
 	rm -rf dist/downloads

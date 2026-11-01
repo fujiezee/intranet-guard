@@ -39,7 +39,8 @@ go build -o "$BUNDLE/safe-server" ./cmd/server
 go build -o "$BUNDLE/downloads/safe-agent-linux-arm64" ./cmd/agent
 go build -o "$BUNDLE/downloads/safe-probe-linux-arm64" ./cmd/probe
 cp -R web/dist "$BUNDLE/web"
-cp scripts/install.sh scripts/backup.sh "$BUNDLE/"
+# 与 make release 相同的方式放入安装包
+install -m 755 scripts/install.sh scripts/backup.sh "$BUNDLE/"
 
 # --- 替身命令 ---
 stub() { printf '#!/bin/sh\n%s\n' "$2" >"$STUBS/$1" && chmod +x "$STUBS/$1"; }
@@ -101,7 +102,8 @@ json() { python3 -c "import sys,json;d=json.load(sys.stdin);print($1)"; }
 perm() { python3 -c 'import os,sys;print(oct(os.stat(sys.argv[1]).st_mode & 0o777)[2:])' "$1" 2>/dev/null; }
 
 echo "== 安装管理中心"
-OUT=$(SAFE_CONSOLE_PORT=$CONSOLE_PORT SAFE_NODE_PORT=$NODE_PORT sh "$BUNDLE/install.sh" 2>&1) || { echo "$OUT"; exit 1; }
+check "安装脚本有执行权限（文档要求 sudo ./install.sh）" '[ -x "$BUNDLE/install.sh" ] && [ -x "$BUNDLE/backup.sh" ]'
+OUT=$(SAFE_CONSOLE_PORT=$CONSOLE_PORT SAFE_NODE_PORT=$NODE_PORT "$BUNDLE/install.sh" 2>&1) || { echo "$OUT"; exit 1; }
 ADMIN_PW=$(printf '%s\n' "$OUT" | sed -n 's/^ *密码： *\([A-Za-z0-9]*\).*/\1/p')
 check "安装成功并打印管理员密码" '[ -n "$ADMIN_PW" ]'
 check "配置文件权限 640" '[ "$(perm "$SAFE_TEST_ROOT/etc/safe/safe.env")" = 640 ]'
