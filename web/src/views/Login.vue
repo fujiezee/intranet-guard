@@ -1,19 +1,21 @@
 <template>
   <div class="login">
     <el-card class="card">
-      <h2>内网防护系统</h2>
+      <h2>{{ t('内网防护系统') }}</h2>
       <el-form :model="form" @submit.prevent="submit">
-        <el-form-item><el-input v-model="form.username" placeholder="用户名" autocomplete="username" /></el-form-item>
+        <el-form-item><el-input v-model="form.username" :placeholder="t('用户名')" autocomplete="username" /></el-form-item>
         <el-form-item>
-          <el-input v-model="form.password" type="password" placeholder="密码" autocomplete="current-password" show-password />
+          <el-input v-model="form.password" type="password" :placeholder="t('密码')" autocomplete="current-password" show-password />
         </el-form-item>
-        <el-button type="primary" native-type="submit" :loading="loading" style="width: 100%">登录</el-button>
+        <el-button type="primary" native-type="submit" :loading="loading" style="width: 100%">{{ t('登录') }}</el-button>
       </el-form>
+      <el-button class="lang" size="small" link @click="setLang(lang === 'en' ? 'zh' : 'en')">{{ lang === 'en' ? '中文' : 'English' }}</el-button>
     </el-card>
   </div>
 </template>
 
 <script setup>
+import { lang, setLang, t } from '../i18n'
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'

@@ -1,58 +1,59 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>漏洞</h2>
+      <h2>{{ t('漏洞') }}</h2>
       <div class="tools">
         <el-radio-group v-model="filter.status" @change="load">
-          <el-radio-button value="open">未修复</el-radio-button>
-          <el-radio-button value="ignored">已忽略</el-radio-button>
-          <el-radio-button value="fixed">已修复</el-radio-button>
-          <el-radio-button value="">全部</el-radio-button>
+          <el-radio-button value="open">{{ t('未修复') }}</el-radio-button>
+          <el-radio-button value="ignored">{{ t('已忽略') }}</el-radio-button>
+          <el-radio-button value="fixed">{{ t('已修复') }}</el-radio-button>
+          <el-radio-button value="">{{ t('全部') }}</el-radio-button>
         </el-radio-group>
-        <el-select v-model="filter.severity" placeholder="全部级别" clearable style="width: 120px" @change="load">
-          <el-option label="高" value="high" />
-          <el-option label="中" value="medium" />
-          <el-option label="低" value="low" />
+        <el-select v-model="filter.severity" :placeholder="t('全部级别')" clearable style="width: 120px" @change="load">
+          <el-option :label="t('高')" value="high" />
+          <el-option :label="t('中')" value="medium" />
+          <el-option :label="t('低')" value="low" />
         </el-select>
         <el-input v-model="filter.ip" placeholder="IP" clearable style="width: 150px" @change="load" />
-        <el-button @click="load">刷新</el-button>
+        <el-button @click="load">{{ t('刷新') }}</el-button>
       </div>
     </div>
 
-    <el-table :data="vulns" v-loading="loading" stripe empty-text="暂无漏洞。在扫描任务中新建“漏洞检测”任务进行检查">
-      <el-table-column label="级别" width="70">
+    <el-table :data="vulns" v-loading="loading" stripe :empty-text="t('暂无漏洞。在扫描任务中新建“漏洞检测”任务进行检查')">
+      <el-table-column :label="t('级别')" width="70">
         <template #default="{ row }"><SeverityTag :severity="row.severity" /></template>
       </el-table-column>
-      <el-table-column label="资产" width="170">
+      <el-table-column :label="t('资产')" width="170">
         <template #default="{ row }"><span class="mono">{{ row.ip }}:{{ row.port }}</span></template>
       </el-table-column>
-      <el-table-column label="漏洞" min-width="380">
+      <el-table-column :label="t('漏洞')" min-width="380">
         <template #default="{ row }">
           <div class="title">{{ row.title }}</div>
           <div class="sub">{{ row.detail }}</div>
         </template>
       </el-table-column>
-      <el-table-column label="状态" width="90">
+      <el-table-column :label="t('状态')" width="90">
         <template #default="{ row }">
           <el-tag size="small" :type="statusMap[row.status].type">{{ statusMap[row.status].label }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="首次发现" width="170"><template #default="{ row }">{{ formatTime(row.first_seen) }}</template></el-table-column>
-      <el-table-column label="最近确认" width="170">
-        <template #default="{ row }">{{ row.status === 'fixed' ? formatTime(row.fixed_at) + ' 修复' : formatTime(row.last_seen) }}</template>
+      <el-table-column :label="t('首次发现')" width="170"><template #default="{ row }">{{ formatTime(row.first_seen) }}</template></el-table-column>
+      <el-table-column :label="t('最近确认')" width="170">
+        <template #default="{ row }">{{ row.status === 'fixed' ? formatTime(row.fixed_at) + t(' 修复') : formatTime(row.last_seen) }}</template>
       </el-table-column>
-      <el-table-column v-if="auth.isAdmin" label="操作" width="90">
+      <el-table-column v-if="auth.isAdmin" :label="t('操作')" width="90">
         <template #default="{ row }">
-          <el-button v-if="row.status === 'open'" size="small" link @click="setStatus(row, 'ignored')">忽略</el-button>
-          <el-button v-else-if="row.status === 'ignored'" size="small" link type="primary" @click="setStatus(row, 'open')">取消忽略</el-button>
+          <el-button v-if="row.status === 'open'" size="small" link @click="setStatus(row, 'ignored')">{{ t('忽略') }}</el-button>
+          <el-button v-else-if="row.status === 'ignored'" size="small" link type="primary" @click="setStatus(row, 'open')">{{ t('取消忽略') }}</el-button>
         </template>
       </el-table-column>
     </el-table>
-    <p class="hint">漏洞修复后无需手动关闭：再次执行漏洞检测时，检查通过或端口已关闭的漏洞会自动标记为已修复。</p>
+    <p class="hint">{{ t('漏洞修复后无需手动关闭：再次执行漏洞检测时，检查通过或端口已关闭的漏洞会自动标记为已修复。') }}</p>
   </div>
 </template>
 
 <script setup>
+import { t } from '../i18n'
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
@@ -61,9 +62,9 @@ import { formatTime } from '../format'
 import SeverityTag from '../components/SeverityTag.vue'
 
 const statusMap = {
-  open: { label: '未修复', type: 'danger' },
-  ignored: { label: '已忽略', type: 'info' },
-  fixed: { label: '已修复', type: 'success' },
+  open: { label: t('未修复'), type: 'danger' },
+  ignored: { label: t('已忽略'), type: 'info' },
+  fixed: { label: t('已修复'), type: 'success' },
 }
 
 const vulns = ref([])
@@ -82,13 +83,13 @@ async function load() {
 async function setStatus(row, status) {
   if (status === 'ignored') {
     try {
-      await ElMessageBox.confirm(`忽略后再次发现 ${row.ip}:${row.port} 的“${row.title}”也不会告警。确定忽略？`, '忽略漏洞', { type: 'warning' })
+      await ElMessageBox.confirm(t('忽略后再次发现 {p0}:{p1} 的“{p2}”也不会告警。确定忽略？', { p0: row.ip, p1: row.port, p2: row.title }), t('忽略漏洞'), { type: 'warning' })
     } catch {
       return
     }
   }
   await api.setVulnStatus(row.id, status)
-  ElMessage.success(status === 'ignored' ? '已忽略' : '已重新打开')
+  ElMessage.success(status === 'ignored' ? t('已忽略') : t('已重新打开'))
   load()
 }
 

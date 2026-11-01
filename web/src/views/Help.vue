@@ -1,15 +1,19 @@
 <template>
   <div class="help">
     <aside class="toc">
-      <div class="toc-title">使用指南</div>
+      <div class="toc-title">{{ t('使用指南') }}</div>
       <a v-for="s in sections" :key="s.id" :class="{ on: s.id === active }" :href="`#${s.id}`" @click.prevent="go(s.id)">{{ s.title }}</a>
     </aside>
     <!-- 内容来自仓库中的 docs/GUIDE.md（构建时嵌入），不含用户输入 -->
-    <article ref="body" class="doc" @click="onClick" v-html="html" />
+    <article ref="body" class="doc" @click="onClick">
+      <el-alert v-if="lang === 'en'" type="info" :closable="false" show-icon title="This guide is available in Chinese only for now." style="margin-bottom: 16px" />
+      <div v-html="html" />
+    </article>
   </div>
 </template>
 
 <script setup>
+import { lang, t } from '../i18n'
 import { nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { marked } from 'marked'

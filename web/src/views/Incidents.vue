@@ -1,33 +1,33 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>事件</h2>
+      <h2>{{ t('事件') }}</h2>
       <div class="tools">
         <el-radio-group v-model="status" @change="load">
-          <el-radio-button value="open">待处理</el-radio-button>
-          <el-radio-button value="investigating">调查中</el-radio-button>
-          <el-radio-button value="resolved">已解决</el-radio-button>
-          <el-radio-button value="">全部</el-radio-button>
+          <el-radio-button value="open">{{ t('待处理') }}</el-radio-button>
+          <el-radio-button value="investigating">{{ t('调查中') }}</el-radio-button>
+          <el-radio-button value="resolved">{{ t('已解决') }}</el-radio-button>
+          <el-radio-button value="">{{ t('全部') }}</el-radio-button>
         </el-radio-group>
-        <el-button @click="load">刷新</el-button>
+        <el-button @click="load">{{ t('刷新') }}</el-button>
       </div>
     </div>
     <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px"
-      title="同一主机 2 小时内的入侵类告警自动归为一个事件；涉及 3 个及以上攻击阶段时升级为高危。资产变化、漏洞等告警不形成事件。" />
+      :title="t('同一主机 2 小时内的入侵类告警自动归为一个事件；涉及 3 个及以上攻击阶段时升级为高危。资产变化、漏洞等告警不形成事件。')" />
 
-    <el-table :data="incidents" v-loading="loading" stripe empty-text="没有事件" @row-click="open" row-class-name="clickable">
-      <el-table-column label="级别" width="70"><template #default="{ row }"><SeverityTag :severity="row.severity" /></template></el-table-column>
+    <el-table :data="incidents" v-loading="loading" stripe :empty-text="t('没有事件')" @row-click="open" row-class-name="clickable">
+      <el-table-column :label="t('级别')" width="70"><template #default="{ row }"><SeverityTag :severity="row.severity" /></template></el-table-column>
       <el-table-column label="#" width="60"><template #default="{ row }">{{ row.id }}</template></el-table-column>
-      <el-table-column prop="title" label="事件" min-width="200" />
-      <el-table-column label="攻击阶段" min-width="320">
+      <el-table-column prop="title" :label="t('事件')" min-width="200" />
+      <el-table-column :label="t('攻击阶段')" min-width="320">
         <template #default="{ row }"><StageBar :stages="row.stages" /></template>
       </el-table-column>
-      <el-table-column prop="alert_count" label="告警数" width="80" />
-      <el-table-column label="状态" width="90">
+      <el-table-column prop="alert_count" :label="t('告警数')" width="80" />
+      <el-table-column :label="t('状态')" width="90">
         <template #default="{ row }"><el-tag size="small" :type="statusMap[row.status].type">{{ statusMap[row.status].label }}</el-tag></template>
       </el-table-column>
-      <el-table-column prop="assignee" label="负责人" width="100" />
-      <el-table-column label="最近活动" width="170"><template #default="{ row }">{{ formatTime(row.last_seen) }}</template></el-table-column>
+      <el-table-column prop="assignee" :label="t('负责人')" width="100" />
+      <el-table-column :label="t('最近活动')" width="170"><template #default="{ row }">{{ formatTime(row.last_seen) }}</template></el-table-column>
     </el-table>
 
     <el-drawer :model-value="!!detail" @close="close" size="760px" :title="detail ? `#${detail.incident.id} ${detail.incident.title}` : ''">
@@ -35,7 +35,7 @@
         <div class="head">
           <SeverityTag :severity="detail.incident.severity" />
           <el-tag size="small" :type="statusMap[detail.incident.status].type">{{ statusMap[detail.incident.status].label }}</el-tag>
-          <span class="sub">{{ formatTime(detail.incident.first_seen) }} — {{ formatTime(detail.incident.last_seen) }}，{{ detail.incident.alert_count }} 条告警</span>
+          <span class="sub">{{ t('{p0} — {p1}，{p2} 条告警', { p0: formatTime(detail.incident.first_seen), p1: formatTime(detail.incident.last_seen), p2: detail.incident.alert_count }) }}</span>
         </div>
         <StageBar :stages="detail.incident.stages" style="margin: 12px 0" />
 
@@ -43,13 +43,13 @@
           <el-select :model-value="detail.incident.status" style="width: 130px" @change="(v) => update({ status: v })">
             <el-option v-for="(v, k) in statusMap" :key="k" :label="v.label" :value="k" />
           </el-select>
-          <el-input v-model="assignee" placeholder="负责人" style="width: 140px" @change="update({ assignee })" />
-          <el-button type="danger" plain @click="router.push({ path: '/response', query: { ip: detail.incident.ip, reason: `事件 #${detail.incident.id}：${detail.incident.title}` } })">处置主机</el-button>
-          <span v-if="detail.agents.length === 0" class="sub">该地址没有 Agent，只有网络侧告警</span>
+          <el-input v-model="assignee" :placeholder="t('负责人')" style="width: 140px" @change="update({ assignee })" />
+          <el-button type="danger" plain @click="router.push({ path: '/response', query: { ip: detail.incident.ip, reason: t('事件 #{p0}：{p1}', { p0: detail.incident.id, p1: detail.incident.title }) } })">{{ t('处置主机') }}</el-button>
+          <span v-if="detail.agents.length === 0" class="sub">{{ t('该地址没有 Agent，只有网络侧告警') }}</span>
         </div>
 
-        <h4>时间线</h4>
-        <el-checkbox v-model="showAudit" style="margin-bottom: 8px">显示主机审计记录（登录、命令等，事件前后 30 分钟）</el-checkbox>
+        <h4>{{ t('时间线') }}</h4>
+        <el-checkbox v-model="showAudit" style="margin-bottom: 8px">{{ t('显示主机审计记录（登录、命令等，事件前后 30 分钟）') }}</el-checkbox>
         <el-timeline>
           <el-timeline-item v-for="item in timeline" :key="item.key" :timestamp="formatTime(item.time)" :type="item.type" placement="top">
             <div v-if="item.alert">
@@ -65,14 +65,14 @@
           </el-timeline-item>
         </el-timeline>
 
-        <h4>处置记录</h4>
+        <h4>{{ t('处置记录') }}</h4>
         <div v-for="n in detail.notes" :key="n.id" class="note">
           <div class="sub">{{ n.author }} · {{ formatTime(n.created_at) }}</div>
           <div>{{ n.body }}</div>
         </div>
         <div v-if="auth.isAdmin" class="note-input">
-          <el-input v-model="note" type="textarea" :rows="2" placeholder="记录排查结论、已采取的措施……" />
-          <el-button :disabled="!note.trim()" @click="addNote">添加</el-button>
+          <el-input v-model="note" type="textarea" :rows="2" :placeholder="t('记录排查结论、已采取的措施……')" />
+          <el-button :disabled="!note.trim()" @click="addNote">{{ t('添加') }}</el-button>
         </div>
       </template>
     </el-drawer>
@@ -80,6 +80,7 @@
 </template>
 
 <script setup>
+import { t } from '../i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
@@ -89,21 +90,21 @@ import SeverityTag from '../components/SeverityTag.vue'
 import StageBar from '../components/StageBar.vue'
 
 const statusMap = {
-  open: { label: '待处理', type: 'danger' },
-  investigating: { label: '调查中', type: 'warning' },
-  resolved: { label: '已解决', type: 'success' },
-  false_positive: { label: '误报', type: 'info' },
+  open: { label: t('待处理'), type: 'danger' },
+  investigating: { label: t('调查中'), type: 'warning' },
+  resolved: { label: t('已解决'), type: 'success' },
+  false_positive: { label: t('误报'), type: 'info' },
 }
 // 告警类型 → 阶段名（与后端 alert/stages.go 一致）
 const alertStage = {
-  ids: '网络攻击', honeypot: '侦察探测', ssh_bruteforce: '凭据获取', bruteforce_success: '初始访问', root_login: '初始访问',
-  suspicious_command: '执行', suspicious_process: '执行', file_changed: '持久化', webshell: '持久化',
-  agent_stopped: '防御规避', agent_offline: '防御规避', lateral_movement: '横向移动',
-  account_change: '持久化', domain_attack: '凭据获取',
-  threat_intel: '命令控制', dns_anomaly: '命令控制', c2_beacon: '命令控制', exfiltration: '数据外传',
+  ids: t('网络攻击'), honeypot: t('侦察探测'), ssh_bruteforce: t('凭据获取'), bruteforce_success: t('初始访问'), root_login: t('初始访问'),
+  suspicious_command: t('执行'), suspicious_process: t('执行'), file_changed: t('持久化'), webshell: t('持久化'),
+  agent_stopped: t('防御规避'), agent_offline: t('防御规避'), lateral_movement: t('横向移动'),
+  account_change: t('持久化'), domain_attack: t('凭据获取'),
+  threat_intel: t('命令控制'), dns_anomaly: t('命令控制'), c2_beacon: t('命令控制'), exfiltration: t('数据外传'),
 }
-const eventLabels = { login_success: '登录成功', login_failed: '登录失败', sudo: 'sudo', command: '命令', suspicious_command: '可疑命令',
-  file_changed: '文件变更', webshell: 'Webshell', suspicious_process: '可疑进程', account_change: '账户变更', domain_attack: '域攻击' }
+const eventLabels = { login_success: t('登录成功'), login_failed: t('登录失败'), sudo: 'sudo', command: t('命令'), suspicious_command: t('可疑命令'),
+  file_changed: t('文件变更'), webshell: 'Webshell', suspicious_process: t('可疑进程'), account_change: t('账户变更'), domain_attack: t('域攻击') }
 const stageName = (t) => alertStage[t] || t
 
 const route = useRoute()

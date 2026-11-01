@@ -1,35 +1,35 @@
 <template>
   <div v-loading="loading">
-    <div class="page-header"><h2>总览</h2></div>
+    <div class="page-header"><h2>{{ t('总览') }}</h2></div>
     <el-row :gutter="16">
-      <el-col :span="6"><el-card shadow="never"><el-statistic title="资产数量" :value="stats.assets" /></el-card></el-col>
+      <el-col :span="6"><el-card shadow="never"><el-statistic :title="t('资产数量')" :value="stats.assets" /></el-card></el-col>
       <el-col :span="6">
         <el-card shadow="never" class="clickable" @click="router.push('/incidents')">
-          <el-statistic title="未结事件" :value="totalIncidents" />
+          <el-statistic :title="t('未结事件')" :value="totalIncidents" />
           <div class="sev">
-            <el-tag type="danger" size="small">高 {{ stats.open_incidents.high || 0 }}</el-tag>
-            <el-tag type="warning" size="small">中 {{ stats.open_incidents.medium || 0 }}</el-tag>
-            <span class="sub">开放端口 {{ stats.open_ports }}</span>
+            <el-tag type="danger" size="small">{{ t('高 {p0}', { p0: stats.open_incidents.high || 0 }) }}</el-tag>
+            <el-tag type="warning" size="small">{{ t('中 {p0}', { p0: stats.open_incidents.medium || 0 }) }}</el-tag>
+            <span class="sub">{{ t('开放端口 {p0}', { p0: stats.open_ports }) }}</span>
           </div>
         </el-card>
       </el-col>
       <el-col :span="6">
         <el-card shadow="never" class="clickable" @click="router.push('/vulns')">
-          <el-statistic title="未修复漏洞" :value="totalVulns" />
+          <el-statistic :title="t('未修复漏洞')" :value="totalVulns" />
           <div class="sev">
-            <el-tag type="danger" size="small">高 {{ stats.open_vulns.high || 0 }}</el-tag>
-            <el-tag type="warning" size="small">中 {{ stats.open_vulns.medium || 0 }}</el-tag>
-            <el-tag type="info" size="small">低 {{ stats.open_vulns.low || 0 }}</el-tag>
+            <el-tag type="danger" size="small">{{ t('高 {p0}', { p0: stats.open_vulns.high || 0 }) }}</el-tag>
+            <el-tag type="warning" size="small">{{ t('中 {p0}', { p0: stats.open_vulns.medium || 0 }) }}</el-tag>
+            <el-tag type="info" size="small">{{ t('低 {p0}', { p0: stats.open_vulns.low || 0 }) }}</el-tag>
           </div>
         </el-card>
       </el-col>
       <el-col :span="6">
         <el-card shadow="never" class="clickable" @click="router.push('/alerts')">
-          <el-statistic title="未处理告警" :value="totalAlerts" />
+          <el-statistic :title="t('未处理告警')" :value="totalAlerts" />
           <div class="sev">
-            <el-tag type="danger" size="small">高 {{ stats.open_alerts.high || 0 }}</el-tag>
-            <el-tag type="warning" size="small">中 {{ stats.open_alerts.medium || 0 }}</el-tag>
-            <el-tag type="info" size="small">低 {{ stats.open_alerts.low || 0 }}</el-tag>
+            <el-tag type="danger" size="small">{{ t('高 {p0}', { p0: stats.open_alerts.high || 0 }) }}</el-tag>
+            <el-tag type="warning" size="small">{{ t('中 {p0}', { p0: stats.open_alerts.medium || 0 }) }}</el-tag>
+            <el-tag type="info" size="small">{{ t('低 {p0}', { p0: stats.open_alerts.low || 0 }) }}</el-tag>
           </div>
         </el-card>
       </el-col>
@@ -37,14 +37,14 @@
 
     <el-row :gutter="16" style="margin-top: 16px">
       <el-col :span="24">
-        <el-card shadow="never" header="风险最高的资产">
-          <el-table :data="risky" size="small" empty-text="暂无风险资产" @row-click="() => router.push('/assets')" row-class-name="clickable">
-            <el-table-column label="风险" width="80">
+        <el-card shadow="never" :header="t('风险最高的资产')">
+          <el-table :data="risky" size="small" :empty-text="t('暂无风险资产')" @row-click="() => router.push('/assets')" row-class-name="clickable">
+            <el-table-column :label="t('风险')" width="80">
               <template #default="{ row }"><el-tag size="small" effect="dark" :type="row.risk >= 60 ? 'danger' : row.risk >= 30 ? 'warning' : 'info'">{{ row.risk }}</el-tag></template>
             </el-table-column>
-            <el-table-column label="资产" width="220"><template #default="{ row }"><span class="mono">{{ row.ip }}</span> {{ row.hostname }}</template></el-table-column>
-            <el-table-column prop="owner" label="负责人" width="100" />
-            <el-table-column label="原因"><template #default="{ row }"><span class="sub">{{ (row.risk_reasons || []).join('；') }}</span></template></el-table-column>
+            <el-table-column :label="t('资产')" width="220"><template #default="{ row }"><span class="mono">{{ row.ip }}</span> {{ row.hostname }}</template></el-table-column>
+            <el-table-column prop="owner" :label="t('负责人')" width="100" />
+            <el-table-column :label="t('原因')"><template #default="{ row }"><span class="sub">{{ (row.risk_reasons || []).join('；') }}</span></template></el-table-column>
           </el-table>
         </el-card>
       </el-col>
@@ -52,8 +52,8 @@
 
     <el-row :gutter="16" style="margin-top: 16px">
       <el-col :span="10">
-        <el-card shadow="never" header="服务分布（Top 10）">
-          <el-empty v-if="!stats.top_services.length" description="暂无数据" />
+        <el-card shadow="never" :header="t('服务分布（Top 10）')">
+          <el-empty v-if="!stats.top_services.length" :description="t('暂无数据')" />
           <div v-for="s in stats.top_services" :key="s.service" class="bar-row">
             <span class="bar-label mono">{{ s.service }}</span>
             <el-progress :percentage="Math.round((s.count / maxService) * 100)" :format="() => s.count" :stroke-width="14" />
@@ -61,13 +61,13 @@
         </el-card>
       </el-col>
       <el-col :span="14">
-        <el-card shadow="never" header="最新未处理告警">
-          <el-table :data="recentAlerts" size="small" empty-text="暂无告警">
-            <el-table-column label="级别" width="70">
+        <el-card shadow="never" :header="t('最新未处理告警')">
+          <el-table :data="recentAlerts" size="small" :empty-text="t('暂无告警')">
+            <el-table-column :label="t('级别')" width="70">
               <template #default="{ row }"><SeverityTag :severity="row.severity" /></template>
             </el-table-column>
-            <el-table-column prop="message" label="内容" />
-            <el-table-column label="时间" width="170">
+            <el-table-column prop="message" :label="t('内容')" />
+            <el-table-column :label="t('时间')" width="170">
               <template #default="{ row }">{{ formatTime(row.created_at) }}</template>
             </el-table-column>
           </el-table>
@@ -78,6 +78,7 @@
 </template>
 
 <script setup>
+import { t } from '../i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'

@@ -1,24 +1,24 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>资产（{{ filtered.length }}）</h2>
+      <h2>{{ t('资产（{p0}）', { p0: filtered.length }) }}</h2>
       <div class="tools">
-        <el-select v-model="groupFilter" placeholder="全部资产组" clearable style="width: 160px">
+        <el-select v-model="groupFilter" :placeholder="t('全部资产组')" clearable style="width: 160px">
           <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.name" />
         </el-select>
-        <el-input v-model="keyword" placeholder="搜索 IP / 主机名 / 端口 / 服务" clearable style="width: 280px" />
-        <el-button @click="load">刷新</el-button>
-        <el-button @click="groupsOpen = true">资产组</el-button>
+        <el-input v-model="keyword" :placeholder="t('搜索 IP / 主机名 / 端口 / 服务')" clearable style="width: 280px" />
+        <el-button @click="load">{{ t('刷新') }}</el-button>
+        <el-button @click="groupsOpen = true">{{ t('资产组') }}</el-button>
       </div>
     </div>
     <el-table :data="filtered" v-loading="loading" stripe @row-click="select" row-class-name="clickable">
       <el-table-column label="IP" width="150" sortable :sort-method="(a, b) => compareIP(a.ip, b.ip)">
         <template #default="{ row }">
           <span class="mono">{{ row.ip }}</span>
-          <el-tag v-if="row.honeypot" size="small" type="warning" style="margin-left: 4px">蜜罐</el-tag>
+          <el-tag v-if="row.honeypot" size="small" type="warning" style="margin-left: 4px">{{ t('蜜罐') }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="风险" width="90" sortable :sort-method="(a, b) => a.risk - b.risk">
+      <el-table-column :label="t('风险')" width="90" sortable :sort-method="(a, b) => a.risk - b.risk">
         <template #default="{ row }">
           <el-tooltip :disabled="!row.risk_reasons?.length" placement="right">
             <template #content><div v-for="r in row.risk_reasons" :key="r">{{ r }}</div></template>
@@ -26,30 +26,30 @@
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column label="主机名 / 负责人" min-width="170">
+      <el-table-column :label="t('主机名 / 负责人')" min-width="170">
         <template #default="{ row }">
           <div>{{ row.hostname }}</div>
           <div class="sub">
-            <el-tag v-if="row.importance === 'core'" size="small" type="danger" effect="plain">核心</el-tag>
-            <el-tag v-else-if="row.importance === 'important'" size="small" type="warning" effect="plain">重要</el-tag>
+            <el-tag v-if="row.importance === 'core'" size="small" type="danger" effect="plain">{{ t('核心') }}</el-tag>
+            <el-tag v-else-if="row.importance === 'important'" size="small" type="warning" effect="plain">{{ t('重要') }}</el-tag>
             {{ row.owner }}
             <el-tag v-for="g in row.groups || []" :key="'g' + g" size="small" class="tag">{{ g }}</el-tag>
             <el-tag v-for="t in row.tags || []" :key="t" size="small" type="info" class="tag">{{ t }}</el-tag>
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="开放端口" min-width="300">
+      <el-table-column :label="t('开放端口')" min-width="300">
         <template #default="{ row }">
           <el-tag v-for="p in row.ports" :key="p.port" size="small" :type="riskyPorts.has(p.port) ? 'danger' : ''" class="port">
             {{ p.port }}{{ p.service ? '/' + p.service : '' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="probe_id" label="探针" width="110" />
-      <el-table-column label="首次发现" width="170" sortable :sort-method="(a, b) => a.first_seen.localeCompare(b.first_seen)">
+      <el-table-column prop="probe_id" :label="t('探针')" width="110" />
+      <el-table-column :label="t('首次发现')" width="170" sortable :sort-method="(a, b) => a.first_seen.localeCompare(b.first_seen)">
         <template #default="{ row }">{{ formatTime(row.first_seen) }}</template>
       </el-table-column>
-      <el-table-column label="最后在线" width="170" sortable :sort-method="(a, b) => a.last_seen.localeCompare(b.last_seen)">
+      <el-table-column :label="t('最后在线')" width="170" sortable :sort-method="(a, b) => a.last_seen.localeCompare(b.last_seen)">
         <template #default="{ row }">{{ formatTime(row.last_seen) }}</template>
       </el-table-column>
     </el-table>
@@ -57,76 +57,76 @@
     <el-drawer :model-value="!!current" @close="current = null" :title="current?.ip" size="560px">
       <template v-if="current">
         <el-descriptions :column="1" border>
-          <el-descriptions-item label="主机名">{{ current.hostname || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="风险">
+          <el-descriptions-item :label="t('主机名')">{{ current.hostname || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('风险')">
             <el-tag size="small" :type="riskType(current.risk)" effect="dark">{{ current.risk }}</el-tag>
-            <span class="sub" style="margin-left: 6px">{{ (current.risk_reasons || []).join('；') || '无' }}</span>
+            <span class="sub" style="margin-left: 6px">{{ (current.risk_reasons || []).join('；') || t('无') }}</span>
           </el-descriptions-item>
-          <el-descriptions-item label="重要性 / 负责人 / 标签">
+          <el-descriptions-item :label="t('重要性 / 负责人 / 标签')">
             <template v-if="auth.isAdmin">
               <div class="meta">
                 <el-select v-model="meta.importance" size="small" style="width: 90px">
-                  <el-option label="普通" value="normal" />
-                  <el-option label="重要" value="important" />
-                  <el-option label="核心" value="core" />
+                  <el-option :label="t('普通')" value="normal" />
+                  <el-option :label="t('重要')" value="important" />
+                  <el-option :label="t('核心')" value="core" />
                 </el-select>
-                <el-input v-model="meta.owner" size="small" placeholder="负责人" style="width: 110px" />
-                <el-input v-model="meta.tags" size="small" placeholder="标签，逗号分隔" style="width: 150px" />
-                <el-button size="small" @click="saveMeta">保存</el-button>
+                <el-input v-model="meta.owner" size="small" :placeholder="t('负责人')" style="width: 110px" />
+                <el-input v-model="meta.tags" size="small" :placeholder="t('标签，逗号分隔')" style="width: 150px" />
+                <el-button size="small" @click="saveMeta">{{ t('保存') }}</el-button>
               </div>
             </template>
             <template v-else>{{ current.importance }} {{ current.owner }} {{ (current.tags || []).join(', ') }}</template>
           </el-descriptions-item>
-          <el-descriptions-item label="探针">{{ current.probe_id }}</el-descriptions-item>
-          <el-descriptions-item label="首次发现">{{ formatTime(current.first_seen) }}</el-descriptions-item>
-          <el-descriptions-item label="最后在线">{{ formatTime(current.last_seen) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('探针')">{{ current.probe_id }}</el-descriptions-item>
+          <el-descriptions-item :label="t('首次发现')">{{ formatTime(current.first_seen) }}</el-descriptions-item>
+          <el-descriptions-item :label="t('最后在线')">{{ formatTime(current.last_seen) }}</el-descriptions-item>
         </el-descriptions>
-        <h4>开放端口</h4>
-        <el-table :data="current.ports" size="small" empty-text="没有开放端口">
-          <el-table-column prop="port" label="端口" width="70" />
-          <el-table-column prop="proto" label="协议" width="60" />
-          <el-table-column prop="service" label="服务" width="110" />
+        <h4>{{ t('开放端口') }}</h4>
+        <el-table :data="current.ports" size="small" :empty-text="t('没有开放端口')">
+          <el-table-column prop="port" :label="t('端口')" width="70" />
+          <el-table-column prop="proto" :label="t('协议')" width="60" />
+          <el-table-column prop="service" :label="t('服务')" width="110" />
           <el-table-column label="Banner">
             <template #default="{ row }"><span class="mono">{{ row.banner }}</span></template>
           </el-table-column>
         </el-table>
       </template>
     </el-drawer>
-    <el-drawer v-model="groupsOpen" title="资产组" size="620px">
+    <el-drawer v-model="groupsOpen" :title="t('资产组')" size="620px">
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 12px">
-        <div>按网段或地址把资产归组，用于筛选，并降低横向移动误报：</div>
-        <div><b>集群</b>：成员之间互相登录属于正常（如 Hadoop、数据库主从、K8s 节点）；从集群外登录多台成员仍会告警。</div>
-        <div><b>运维跳板</b>：成员（堡垒机、Ansible 控制机）登录任何主机都属于正常。</div>
+        <div>{{ t('按网段或地址把资产归组，用于筛选，并降低横向移动误报：') }}</div>
+        <div><b>{{ t('集群') }}</b>{{ t('：成员之间互相登录属于正常（如 Hadoop、数据库主从、K8s 节点）；从集群外登录多台成员仍会告警。') }}</div>
+        <div><b>{{ t('运维跳板') }}</b>{{ t('：成员（堡垒机、Ansible 控制机）登录任何主机都属于正常。') }}</div>
       </el-alert>
-      <el-table :data="groups" size="small" empty-text="还没有资产组">
-        <el-table-column prop="name" label="名称" width="140" />
-        <el-table-column label="类型" width="90">
+      <el-table :data="groups" size="small" :empty-text="t('还没有资产组')">
+        <el-table-column prop="name" :label="t('名称')" width="140" />
+        <el-table-column :label="t('类型')" width="90">
           <template #default="{ row }"><el-tag size="small" :type="row.kind === 'admin' ? 'warning' : ''">{{ kindLabels[row.kind] }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="成员"><template #default="{ row }"><span class="mono">{{ row.members.join(', ') }}</span></template></el-table-column>
+        <el-table-column :label="t('成员')"><template #default="{ row }"><span class="mono">{{ row.members.join(', ') }}</span></template></el-table-column>
         <el-table-column v-if="auth.isAdmin" label="" width="110">
           <template #default="{ row }">
-            <el-button size="small" link @click="editGroup(row)">编辑</el-button>
-            <el-button size="small" link type="danger" @click="removeGroup(row)">删除</el-button>
+            <el-button size="small" link @click="editGroup(row)">{{ t('编辑') }}</el-button>
+            <el-button size="small" link type="danger" @click="removeGroup(row)">{{ t('删除') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
       <el-form v-if="auth.isAdmin" :model="groupForm" label-width="70px" style="margin-top: 16px">
-        <h4>{{ groupForm.id ? '编辑资产组' : '新建资产组' }}</h4>
-        <el-form-item label="名称"><el-input v-model="groupForm.name" placeholder="例如 Hadoop 集群" /></el-form-item>
-        <el-form-item label="类型">
+        <h4>{{ groupForm.id ? t('编辑资产组') : t('新建资产组') }}</h4>
+        <el-form-item :label="t('名称')"><el-input v-model="groupForm.name" :placeholder="t('例如 Hadoop 集群')" /></el-form-item>
+        <el-form-item :label="t('类型')">
           <el-radio-group v-model="groupForm.kind">
-            <el-radio value="cluster">集群</el-radio>
-            <el-radio value="admin">运维跳板</el-radio>
+            <el-radio value="cluster">{{ t('集群') }}</el-radio>
+            <el-radio value="admin">{{ t('运维跳板') }}</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="成员">
-          <el-input v-model="groupForm.members" type="textarea" :rows="3" placeholder="IP 或网段，每行一个或逗号分隔，例如 10.1.0.0/24" />
+        <el-form-item :label="t('成员')">
+          <el-input v-model="groupForm.members" type="textarea" :rows="3" :placeholder="t('IP 或网段，每行一个或逗号分隔，例如 10.1.0.0/24')" />
         </el-form-item>
-        <el-form-item label="备注"><el-input v-model="groupForm.note" /></el-form-item>
+        <el-form-item :label="t('备注')"><el-input v-model="groupForm.note" /></el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="submitGroup">保存</el-button>
-          <el-button v-if="groupForm.id" @click="resetGroup">取消编辑</el-button>
+          <el-button type="primary" @click="submitGroup">{{ t('保存') }}</el-button>
+          <el-button v-if="groupForm.id" @click="resetGroup">{{ t('取消编辑') }}</el-button>
         </el-form-item>
       </el-form>
     </el-drawer>
@@ -134,6 +134,7 @@
 </template>
 
 <script setup>
+import { t } from '../i18n'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
@@ -161,7 +162,7 @@ async function saveMeta() {
     owner: meta.owner,
     tags: meta.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
   })
-  ElMessage.success('已保存')
+  ElMessage.success(t('已保存'))
   await load()
   select(assets.value.find((a) => a.ip === current.value.ip))
 }
@@ -169,7 +170,7 @@ async function saveMeta() {
 const groupFilter = ref('')
 const groups = ref([])
 const groupsOpen = ref(false)
-const kindLabels = { cluster: '集群', admin: '运维跳板' }
+const kindLabels = { cluster: t('集群'), admin: t('运维跳板') }
 const groupForm = reactive({ id: 0, name: '', kind: 'cluster', members: '', note: '' })
 
 function resetGroup() {
@@ -189,12 +190,12 @@ async function submitGroup() {
     note: groupForm.note,
     members: groupForm.members.split(/[\s,，]+/).filter(Boolean),
   })
-  ElMessage.success('已保存')
+  ElMessage.success(t('已保存'))
   resetGroup()
   await Promise.all([loadGroups(), load()])
 }
 async function removeGroup(g) {
-  await ElMessageBox.confirm(`删除资产组「${g.name}」？组内主机之间的登录将重新按横向移动规则判断。`, '删除资产组', { type: 'warning' })
+  await ElMessageBox.confirm(t('删除资产组「{p0}」？组内主机之间的登录将重新按横向移动规则判断。', { p0: g.name }), t('删除资产组'), { type: 'warning' })
   await api.deleteGroup(g.id)
   await Promise.all([loadGroups(), load()])
 }

@@ -8,18 +8,19 @@
 </template>
 
 <script setup>
+import { t } from '../i18n'
 defineProps({ stages: { type: Array, default: () => [] } })
 const all = [
-  { key: 'network', name: '网络攻击', short: '网络' },
-  { key: 'discovery', name: '侦察探测', short: '侦察' },
-  { key: 'credential', name: '凭据获取', short: '凭据' },
-  { key: 'initial', name: '初始访问', short: '访问' },
-  { key: 'execution', name: '执行', short: '执行' },
-  { key: 'persistence', name: '持久化', short: '持久' },
-  { key: 'evasion', name: '防御规避', short: '规避' },
-  { key: 'lateral', name: '横向移动', short: '横向' },
-  { key: 'c2', name: '命令控制', short: '控制' },
-  { key: 'exfil', name: '数据外传', short: '外传' },
+  { key: 'network', name: t('网络攻击'), short: t('网络') },
+  { key: 'discovery', name: t('侦察探测'), short: t('侦察') },
+  { key: 'credential', name: t('凭据获取'), short: t('凭据') },
+  { key: 'initial', name: t('初始访问'), short: t('访问') },
+  { key: 'execution', name: t('执行'), short: t('执行') },
+  { key: 'persistence', name: t('持久化'), short: t('持久') },
+  { key: 'evasion', name: t('防御规避'), short: t('规避') },
+  { key: 'lateral', name: t('横向移动'), short: t('横向') },
+  { key: 'c2', name: t('命令控制'), short: t('控制') },
+  { key: 'exfil', name: t('数据外传'), short: t('外传') },
 ]
 </script>
 

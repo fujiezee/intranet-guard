@@ -1,4 +1,5 @@
 import { ElMessage } from 'element-plus'
+import { lang, t } from './i18n'
 import { auth, clearSession } from './auth'
 import router from './router'
 
@@ -39,7 +40,7 @@ async function request(method, path, body) {
   if (resp.status === 204) return null
   const data = await resp.json().catch(() => ({}))
   if (!resp.ok) {
-    const msg = messages[data.error] || data.error || `请求失败 (${resp.status})`
+    const msg = (lang === 'zh' && messages[data.error]) || data.error || t('请求失败 ({status})', { status: resp.status })
     if (resp.status === 401 && path !== '/auth/login') {
       clearSession()
       router.push({ name: 'login', query: { redirect: router.currentRoute.value.fullPath } })

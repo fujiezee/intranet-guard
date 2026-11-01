@@ -1,105 +1,106 @@
 <template>
   <div>
     <div class="page-header">
-      <h2>蜜罐</h2>
+      <h2>{{ t('蜜罐') }}</h2>
       <div class="tools">
-        <el-button @click="load">刷新</el-button>
-        <el-button v-if="auth.isAdmin" type="primary" @click="edit(null)">为探针配置蜜罐</el-button>
+        <el-button @click="load">{{ t('刷新') }}</el-button>
+        <el-button v-if="auth.isAdmin" type="primary" @click="edit(null)">{{ t('为探针配置蜜罐') }}</el-button>
       </div>
     </div>
     <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px"
-      title="蜜罐运行在探针上，伪装成常见服务。正常业务不会访问它，任何访问都会以高危告警推送——访问来源很可能已失陷。探针自身的扫描不会触发告警。" />
+      :title="t('蜜罐运行在探针上，伪装成常见服务。正常业务不会访问它，任何访问都会以高危告警推送——访问来源很可能已失陷。探针自身的扫描不会触发告警。')" />
 
-    <el-card shadow="never" header="探针蜜罐">
-      <el-table :data="honeypots" size="small" empty-text="还没有配置蜜罐">
-        <el-table-column prop="probe_id" label="探针" width="140" />
-        <el-table-column label="状态" width="90">
+    <el-card shadow="never" :header="t('探针蜜罐')">
+      <el-table :data="honeypots" size="small" :empty-text="t('还没有配置蜜罐')">
+        <el-table-column prop="probe_id" :label="t('探针')" width="140" />
+        <el-table-column :label="t('状态')" width="90">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.config.enabled ? 'success' : 'info'">{{ row.config.enabled ? '启用' : '停用' }}</el-tag>
+            <el-tag size="small" :type="row.config.enabled ? 'success' : 'info'">{{ row.config.enabled ? t('启用') : t('停用') }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="地址" width="160">
+        <el-table-column :label="t('地址')" width="160">
           <template #default="{ row }"><span class="mono">{{ (row.probe_ips || []).filter((ip) => !ip.includes(':')).join(', ') || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="伪装服务" min-width="320">
+        <el-table-column :label="t('伪装服务')" min-width="320">
           <template #default="{ row }">
-            <el-tooltip v-for="s in row.config.services" :key="s.port" :content="row.status?.[s.port] || '等待探针上报'">
+            <el-tooltip v-for="s in row.config.services" :key="s.port" :content="row.status?.[s.port] || t('等待探针上报')">
               <el-tag size="small" class="svc" :type="portType(row, s.port)">{{ serviceLabel(s.type) }} :{{ s.port }}</el-tag>
             </el-tooltip>
           </template>
         </el-table-column>
-        <el-table-column label="最近同步" width="170"><template #default="{ row }">{{ formatTime(row.seen_at) || '-' }}</template></el-table-column>
-        <el-table-column v-if="auth.isAdmin" label="操作" width="80">
-          <template #default="{ row }"><el-button size="small" link type="primary" @click="edit(row)">编辑</el-button></template>
+        <el-table-column :label="t('最近同步')" width="170"><template #default="{ row }">{{ formatTime(row.seen_at) || '-' }}</template></el-table-column>
+        <el-table-column v-if="auth.isAdmin" :label="t('操作')" width="80">
+          <template #default="{ row }"><el-button size="small" link type="primary" @click="edit(row)">{{ t('编辑') }}</el-button></template>
         </el-table-column>
       </el-table>
-      <p class="hint">端口为红色表示监听失败（多为端口已被占用），鼠标悬停查看原因。</p>
+      <p class="hint">{{ t('端口为红色表示监听失败（多为端口已被占用），鼠标悬停查看原因。') }}</p>
     </el-card>
 
-    <el-card shadow="never" header="访问记录" style="margin-top: 16px">
-      <el-table :data="events" size="small" stripe empty-text="暂无访问">
-        <el-table-column label="时间" width="170"><template #default="{ row }">{{ formatTime(row.time) }}</template></el-table-column>
-        <el-table-column label="来源" width="160">
+    <el-card shadow="never" :header="t('访问记录')" style="margin-top: 16px">
+      <el-table :data="events" size="small" stripe :empty-text="t('暂无访问')">
+        <el-table-column :label="t('时间')" width="170"><template #default="{ row }">{{ formatTime(row.time) }}</template></el-table-column>
+        <el-table-column :label="t('来源')" width="160">
           <template #default="{ row }"><span class="mono">{{ row.src_ip }}</span></template>
         </el-table-column>
-        <el-table-column label="蜜罐" width="190">
+        <el-table-column :label="t('蜜罐')" width="190">
           <template #default="{ row }">{{ row.probe_id }} · {{ serviceLabel(row.service) }} :{{ row.port }}</template>
         </el-table-column>
-        <el-table-column label="尝试凭据" width="170">
+        <el-table-column :label="t('尝试凭据')" width="170">
           <template #default="{ row }"><span class="mono">{{ [row.username, row.password].filter(Boolean).join(' / ') }}</span></template>
         </el-table-column>
-        <el-table-column label="详情" min-width="280">
+        <el-table-column :label="t('详情')" min-width="280">
           <template #default="{ row }">
-            <el-tag v-if="row.simulation_id" size="small" type="success" style="margin-right: 4px">自检</el-tag>{{ row.detail }}
+            <el-tag v-if="row.simulation_id" size="small" type="success" style="margin-right: 4px">{{ t('自检') }}</el-tag>{{ row.detail }}
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialog" title="配置蜜罐" width="600px">
+    <el-dialog v-model="dialog" :title="t('配置蜜罐')" width="600px">
       <el-form label-width="90px">
-        <el-form-item label="探针 ID">
-          <el-select v-model="form.probe_id" filterable allow-create placeholder="选择或输入探针 ID" style="width: 100%" :disabled="editing">
+        <el-form-item :label="t('探针 ID')">
+          <el-select v-model="form.probe_id" filterable allow-create :placeholder="t('选择或输入探针 ID')" style="width: 100%" :disabled="editing">
             <el-option v-for="p in probes" :key="p" :label="p" :value="p" />
           </el-select>
         </el-form-item>
-        <el-form-item label="启用"><el-switch v-model="form.enabled" /></el-form-item>
-        <el-form-item label="伪装服务">
+        <el-form-item :label="t('启用')"><el-switch v-model="form.enabled" /></el-form-item>
+        <el-form-item :label="t('伪装服务')">
           <div class="svc-list">
             <div v-for="(s, i) in form.services" :key="i" class="svc-row">
               <el-select v-model="s.type" style="width: 150px">
                 <el-option v-for="(label, value) in types" :key="value" :label="label" :value="value" />
               </el-select>
               <el-input-number v-model="s.port" :min="1" :max="65535" controls-position="right" />
-              <el-button link type="danger" @click="form.services.splice(i, 1)">移除</el-button>
+              <el-button link type="danger" @click="form.services.splice(i, 1)">{{ t('移除') }}</el-button>
             </div>
             <div>
-              <el-button size="small" @click="form.services.push({ type: 'tcp', port: 10000 })">添加</el-button>
-              <el-button size="small" link @click="form.services = presets()">恢复推荐配置</el-button>
+              <el-button size="small" @click="form.services.push({ type: 'tcp', port: 10000 })">{{ t('添加') }}</el-button>
+              <el-button size="small" link @click="form.services = presets()">{{ t('恢复推荐配置') }}</el-button>
             </div>
           </div>
         </el-form-item>
-        <el-form-item label="忽略来源">
-          <el-input v-model="form.ignore" type="textarea" :rows="2" placeholder="每行一个 IP 或网段，如内部漏洞扫描器 10.1.0.50" />
+        <el-form-item :label="t('忽略来源')">
+          <el-input v-model="form.ignore" type="textarea" :rows="2" :placeholder="t('每行一个 IP 或网段，如内部漏洞扫描器 10.1.0.50')" />
         </el-form-item>
       </el-form>
-      <p class="hint">端口不能与探针机器上已有的服务冲突（例如 SSH 的 22）。端口低于 1024 需要探针以 root 运行（一键安装默认如此）。</p>
+      <p class="hint">{{ t('端口不能与探针机器上已有的服务冲突（例如 SSH 的 22）。端口低于 1024 需要探针以 root 运行（一键安装默认如此）。') }}</p>
       <template #footer>
-        <el-button @click="dialog = false">取消</el-button>
-        <el-button type="primary" @click="save">保存</el-button>
+        <el-button @click="dialog = false">{{ t('取消') }}</el-button>
+        <el-button type="primary" @click="save">{{ t('保存') }}</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup>
+import { t } from '../i18n'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { auth } from '../auth'
 import { formatTime } from '../format'
 
-const types = { ssh: 'SSH', ftp: 'FTP', telnet: 'Telnet', mysql: 'MySQL', redis: 'Redis', http: 'HTTP 管理后台', tcp: '通用 TCP（RDP/SMB 等）' }
+const types = { ssh: 'SSH', ftp: 'FTP', telnet: 'Telnet', mysql: 'MySQL', redis: 'Redis', http: t('HTTP 管理后台'), tcp: t('通用 TCP（RDP/SMB 等）') }
 const serviceLabel = (t) => types[t]?.split('（')[0] || t
 const presets = () => [
   { type: 'ssh', port: 2222 },
@@ -144,7 +145,7 @@ function edit(row) {
 
 async function save() {
   if (!form.probe_id) {
-    ElMessage.error('请选择探针')
+    ElMessage.error(t('请选择探针'))
     return
   }
   await api.setHoneypot(form.probe_id, {
@@ -152,7 +153,7 @@ async function save() {
     services: form.services,
     ignore_sources: form.ignore.split(/\s+/).filter(Boolean),
   })
-  ElMessage.success('已保存，探针将在 15 秒内生效')
+  ElMessage.success(t('已保存，探针将在 15 秒内生效'))
   dialog.value = false
   load()
 }
