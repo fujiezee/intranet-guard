@@ -60,6 +60,8 @@ TOKEN=$(curl -fsSk -X POST "$CONSOLE/api/v1/auth/login" -d "{\"username\":\"admi
 PIN=$(api GET /install-info | json 'd["pin"]')
 
 step "一行命令安装 Agent 和探针"
+# CI 机器上没有 Suricata：预先建好 eve.json，安装脚本会让探针读取它，之后写入按 Suricata 格式构造的记录
+mkdir -p /var/log/suricata && : >/var/log/suricata/eve.json
 mkdir -p /var/www/html # 让 Webshell 监控和自检有网站目录可用
 AT=$(api POST /enroll-tokens '{"kind":"agent","max_uses":1,"ttl_hours":1}' | json 'd["token"]')
 PT=$(api POST /enroll-tokens '{"kind":"probe","max_uses":1,"ttl_hours":1}' | json 'd["token"]')
@@ -88,11 +90,45 @@ sleep 5
 wait_for "蜜罐告警归入来源主机的事件（侦察探测阶段）" 10 \
 	"api GET /incidents | json '[i for i in d if i[\"ip\"]==\"127.0.0.2\" and \"discovery\" in i[\"stages\"]][0]'"
 
+step "威胁情报与外联分析（合成的 Suricata 记录）"
+EVE=/var/log/suricata/eve.json
+ts() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%S.000000+0000; }
+api POST /intel/indicators '{"text":"c2.e2e-test.example\n203.0.113.77","severity":"high","note":"e2e"}' >/dev/null
+VER=$(api GET /intel | json 'len(d["indicators"])')
+[ "$VER" = 2 ] && ok "导入 2 条情报"
+grep -q -- "-eve /var/log/suricata/eve.json" /etc/systemd/system/safe-probe.service && ok "探针读取完整的 eve.json"
+wait_for "探针加载情报（日志）" 40 "journalctl -u safe-probe --no-pager | grep -q 'threat intel loaded.*indicators=3'"
+NOW=$(date +%s)
+{
+	printf '{"timestamp":"%s","event_type":"dns","src_ip":"10.9.0.5","src_port":5353,"dest_ip":"10.9.0.53","dest_port":53,"proto":"UDP","dns":{"type":"query","rrname":"www.c2.e2e-test.example","rrtype":"A"}}\n' "$(ts $NOW)"
+	printf '{"timestamp":"%s","event_type":"flow","src_ip":"10.9.0.6","src_port":40000,"dest_ip":"203.0.113.77","dest_port":443,"proto":"TCP","flow":{"bytes_toserver":900,"start":"%s"}}\n' "$(ts $NOW)" "$(ts $NOW)"
+	# 每 60 秒一次、略有抖动的连接：C2 心跳
+	for i in $(seq 0 14); do
+		t=$((NOW - 1800 + i * 60 + (i % 3) - 1))
+		printf '{"timestamp":"%s","event_type":"flow","src_ip":"10.9.0.7","src_port":%d,"dest_ip":"198.51.100.99","dest_port":8443,"proto":"TCP","flow":{"bytes_toserver":300,"start":"%s"}}\n' "$(ts $t)" $((41000 + i)) "$(ts $t)"
+	done
+} >>"$EVE"
+wait_for "查询情报域名 → 威胁情报告警（关联 10.9.0.5）" 30 \
+	"api GET /alerts | json '[a for a in d if a[\"type\"]==\"threat_intel\" and a[\"ip\"]==\"10.9.0.5\" and \"c2.e2e-test.example\" in a[\"message\"]][0]'"
+wait_for "连接情报地址 → 威胁情报告警（关联 10.9.0.6）" 30 \
+	"api GET /alerts | json '[a for a in d if a[\"type\"]==\"threat_intel\" and a[\"ip\"]==\"10.9.0.6\"][0]'"
+wait_for "固定间隔连接 → C2 心跳告警（探针每分钟评估一次）" 100 \
+	"api GET /alerts | json '[a for a in d if a[\"type\"]==\"c2_beacon\" and a[\"ip\"]==\"10.9.0.7\"][0]'"
+wait_for "情报命中归入“命令控制”阶段的事件" 10 \
+	"api GET /incidents | json '[i for i in d if i[\"ip\"]==\"10.9.0.5\" and \"c2\" in i[\"stages\"]][0]'"
+
 step "攻击模拟自检"
 api POST /simulations '{"agent_id":"ci-agent","scenarios":["fim","process","honeypot","reverse_shell","download_exec","webshell"]}' >/dev/null
+# 情报自检：CI 中没有 Suricata 抓包，按 Agent 将要发出的查询写入一条合成的 DNS 记录，验证情报匹配与自检判定
+SIM=$(api POST /simulations '{"agent_id":"ci-agent","scenarios":["intel_dns"]}' | json 'd[0]["id"]')
+# 真实情况下查询发生在 Agent 领取之后；合成记录也要等自检进入“执行中”再写入，否则告警先于领取出现
+wait_for "Agent 领取情报自检" 60 "api GET /simulations | json '[s for s in d if s[\"id\"]==\"$SIM\" and s[\"status\"]==\"running\"][0]'"
+printf '{"timestamp":"%s","event_type":"dns","src_ip":"10.9.0.21","dest_ip":"10.9.0.53","dest_port":53,"proto":"UDP","dns":{"type":"query","rrname":"%s.safe-sim.example.com"}}\n' \
+	"$(date -u +%Y-%m-%dT%H:%M:%S.000000+0000)" "$SIM" >>/var/log/suricata/eve.json
+wait_for "情报命中自检通过（合成的 DNS 记录）" 60 "api GET /simulations | json '[s for s in d if s[\"id\"]==\"$SIM\" and s[\"status\"]==\"passed\"][0]'"
 wait_for "自检全部结束" 240 "api GET /simulations | json 'all(s[\"status\"] not in (\"pending\",\"running\") for s in d)' | grep -qx True"
 api GET /simulations | json '"\n".join("    %s %-9s %s %s" % (s["scenario"], s["status"], s.get("latency_ms",0), s.get("detail","")) for s in d)'
-[ "$(api GET /simulations | json 'sum(s["status"]=="passed" for s in d)')" = 6 ] || fail "自检未全部通过"
+[ "$(api GET /simulations | json 'sum(s["status"]=="passed" and s["scenario"]!="intel_dns" for s in d)')" = 6 ] || fail "自检未全部通过"
 ok "文件篡改、临时目录执行、访问蜜罐、反弹 shell、下载并执行、Webshell 6 个场景全部检出"
 wait_for "自检产物已自动清理" 150 "! ls /etc/cron.d/safe-simulation-* /tmp/safe-sim-* /var/www/html/safe-sim-* 2>/dev/null | grep -q ."
 [ "$(api GET '/alerts?status=open' | json 'len([a for a in d if "sim-" in a["message"]])')" = 0 ] && ok "自检告警已自动关闭"

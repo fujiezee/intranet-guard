@@ -18,7 +18,9 @@ var (
 	StagePersistence = Stage{"persistence", "持久化", 5}
 	StageEvasion     = Stage{"evasion", "防御规避", 6}
 	StageLateral     = Stage{"lateral", "横向移动", 7}
-	Stages           = []Stage{StageNetwork, StageDiscovery, StageCredential, StageInitial, StageExecution, StagePersistence, StageEvasion, StageLateral}
+	StageC2          = Stage{"c2", "命令控制", 8}
+	StageExfil       = Stage{"exfil", "数据外传", 9}
+	Stages           = []Stage{StageNetwork, StageDiscovery, StageCredential, StageInitial, StageExecution, StagePersistence, StageEvasion, StageLateral, StageC2, StageExfil}
 )
 
 // incidentStages 是会形成事件的告警类型及其所属阶段。资产变化、漏洞等"卫生"类告警不形成事件。
@@ -37,6 +39,10 @@ var incidentStages = map[model.AlertType]Stage{
 	model.AlertLateralMovement:   StageLateral,
 	model.AlertAccountChange:     StagePersistence,
 	model.AlertDomainAttack:      StageCredential,
+	model.AlertThreatIntel:       StageC2,
+	model.AlertDNSAnomaly:        StageC2,
+	model.AlertBeacon:            StageC2,
+	model.AlertExfil:             StageExfil,
 }
 
 // attachOnly 的告警只并入已有事件，不单独开启事件：Agent 停止 / 离线多数是运维操作，

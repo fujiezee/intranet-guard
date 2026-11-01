@@ -18,6 +18,8 @@ const all = [
   { key: 'persistence', name: '持久化', short: '持久' },
   { key: 'evasion', name: '防御规避', short: '规避' },
   { key: 'lateral', name: '横向移动', short: '横向' },
+  { key: 'c2', name: '命令控制', short: '控制' },
+  { key: 'exfil', name: '数据外传', short: '外传' },
 ]
 </script>
 

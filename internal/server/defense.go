@@ -12,6 +12,7 @@ import (
 	"safe/internal/alert"
 	"safe/internal/honeypot"
 	"safe/internal/model"
+	"safe/internal/netintel"
 	"safe/internal/simulate"
 	"safe/internal/store"
 )
@@ -94,7 +95,9 @@ type probeConfigRequest struct {
 }
 
 type probeConfigResponse struct {
-	Honeypot model.HoneypotConfig `json:"honeypot"`
+	Honeypot     model.HoneypotConfig `json:"honeypot"`
+	IntelVersion int64                `json:"intel_version"` // 变化时探针重新拉取 /api/v1/probe/intel
+	Net          netintel.Config      `json:"net"`
 }
 
 func (s *Server) probeConfig(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +115,16 @@ func (s *Server) probeConfig(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, probeConfigResponse{Honeypot: cfg})
+	resp := probeConfigResponse{Honeypot: cfg}
+	if resp.IntelVersion, err = s.store.IntelVersion(r.Context()); err != nil {
+		writeInternal(w, err)
+		return
+	}
+	if resp.Net, err = s.store.NetConfig(r.Context()); err != nil {
+		writeInternal(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type honeypotReport struct {

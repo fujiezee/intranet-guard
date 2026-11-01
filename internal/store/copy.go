@@ -20,12 +20,13 @@ var copyTables = []struct {
 	{"notify_channels", true}, {"notify_cursor", false}, {"audit_log", true},
 	{"honeypots", false}, {"honeypot_events", true}, {"simulations", false}, {"response_actions", false},
 	{"incidents", true}, {"incident_notes", true},
+	{"intel_indicators", true}, {"intel_feeds", true}, {"intel_meta", false},
 }
 
 // boolColumns 在 SQLite 里存为 0/1，写入 PostgreSQL 时转换为布尔值。
 var boolColumns = map[string]bool{
 	"tasks.baseline": true, "tasks.weak_password": true, "ids_events.suppressed": true,
-	"notify_channels.enabled": true, "audit_log.success": true, "honeypots.enabled": true,
+	"notify_channels.enabled": true, "audit_log.success": true, "honeypots.enabled": true, "intel_feeds.enabled": true,
 }
 
 // CopyFrom 把 src（通常是 SQLite）中的全部数据复制到 s（通常是 PostgreSQL）。

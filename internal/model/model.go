@@ -500,3 +500,33 @@ const (
 	ImportanceImportant = "important"
 	ImportanceCore      = "core"
 )
+
+const (
+	AlertThreatIntel AlertType = "threat_intel" // 与威胁情报中的地址 / 域名通信
+	AlertDNSAnomaly  AlertType = "dns_anomaly"  // DGA、DNS 隧道
+	AlertBeacon      AlertType = "c2_beacon"    // 周期性外联（C2 心跳）
+	AlertExfil       AlertType = "exfiltration" // 非工作时间大流量外传
+)
+
+// IntelIndicator 是一条威胁情报（管理中心存储的形式）。
+type IntelIndicator struct {
+	ID        int64     `json:"id"`
+	Type      string    `json:"type"` // ip / cidr / domain
+	Value     string    `json:"value"`
+	Source    string    `json:"source"` // manual 或 feed:<id>
+	Severity  Severity  `json:"severity"`
+	Note      string    `json:"note,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// IntelFeed 是一个情报订阅源：纯文本，每行一个 IP / 网段 / 域名（兼容 hosts 文件格式）。
+type IntelFeed struct {
+	ID        int64      `json:"id"`
+	Name      string     `json:"name"`
+	URL       string     `json:"url"`
+	Severity  Severity   `json:"severity"`
+	Enabled   bool       `json:"enabled"`
+	Count     int        `json:"count"`
+	LastFetch *time.Time `json:"last_fetch,omitempty"`
+	LastError string     `json:"last_error,omitempty"`
+}

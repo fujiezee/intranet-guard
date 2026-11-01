@@ -100,6 +100,7 @@ const alertStage = {
   suspicious_command: '执行', suspicious_process: '执行', file_changed: '持久化', webshell: '持久化',
   agent_stopped: '防御规避', agent_offline: '防御规避', lateral_movement: '横向移动',
   account_change: '持久化', domain_attack: '凭据获取',
+  threat_intel: '命令控制', dns_anomaly: '命令控制', c2_beacon: '命令控制', exfiltration: '数据外传',
 }
 const eventLabels = { login_success: '登录成功', login_failed: '登录失败', sudo: 'sudo', command: '命令', suspicious_command: '可疑命令',
   file_changed: '文件变更', webshell: 'Webshell', suspicious_process: '可疑进程', account_change: '账户变更', domain_attack: '域攻击' }

@@ -175,7 +175,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go maintenance(ctx, st, *taskTimeout)
+	go maintenance(ctx, st, handler, *taskTimeout)
 	go notify.Run(ctx, st, 10*time.Second)
 	go func() {
 		<-ctx.Done()
@@ -242,10 +242,12 @@ const (
 )
 
 // maintenance 定期执行：Agent 离线检测、超时任务清理（每分钟），过期会话与历史事件清理（每小时）。
-func maintenance(ctx context.Context, st *store.Store, taskTimeout time.Duration) {
+func maintenance(ctx context.Context, st *store.Store, srv *server.Server, taskTimeout time.Duration) {
 	minute := time.NewTicker(time.Minute)
 	hour := time.NewTicker(time.Hour)
 	sims := time.NewTicker(10 * time.Second)
+	feeds := time.NewTicker(10 * time.Minute) // 情报订阅源每 6 小时拉取一次
+	defer feeds.Stop()
 	defer sims.Stop()
 	defer minute.Stop()
 	defer hour.Stop()
@@ -253,6 +255,14 @@ func maintenance(ctx context.Context, st *store.Store, taskTimeout time.Duration
 		select {
 		case <-ctx.Done():
 			return
+		case <-feeds.C:
+			due, err := st.FeedsDue(ctx, 6*time.Hour)
+			if err != nil {
+				slog.Warn("intel feeds", "err", err)
+			}
+			for _, f := range due {
+				srv.FetchFeed(ctx, f)
+			}
 		case <-sims.C:
 			if n, err := st.ExpireSimulations(ctx, time.Now()); err != nil {
 				slog.Warn("expire simulations", "err", err)

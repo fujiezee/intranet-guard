@@ -73,8 +73,9 @@ ARGS="-server $SERVER -state $STATE/state.json"
 [ -n "${SAFE_AGENT_ID:-}" ] && ARGS="$ARGS -id $SAFE_AGENT_ID"
 {{- else}}
 [ -n "${SAFE_PROBE_ID:-}" ] && ARGS="$ARGS -id $SAFE_PROBE_ID"
-# 本机装了 Suricata 时自动读取它的告警
-for eve in /var/log/suricata/eve-alert.json /var/log/suricata/eve.json; do
+# 本机装了 Suricata 时自动读取它的输出。优先完整的 eve.json：除告警外还有 dns / tls / http / flow 记录，
+# 用于威胁情报、DGA、DNS 隧道、C2 心跳和外传分析；只有告警文件时网络分析不可用
+for eve in /var/log/suricata/eve.json /var/log/suricata/eve-alert.json; do
 	if [ -f "$eve" ]; then
 		ARGS="$ARGS -eve $eve"
 		say "检测到 Suricata：$eve"

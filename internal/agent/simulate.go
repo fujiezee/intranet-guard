@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
@@ -50,6 +51,8 @@ func (a *Agent) runCommand(cmd model.AgentCommand) model.CommandResult {
 		na, err = a.simDownloadExec(cmd.ID)
 	case simulate.WebshellDrop:
 		na, err = a.simWebshell(cmd.ID)
+	case simulate.IntelDNS:
+		simIntelDNS(cmd.ID)
 	default:
 		res.Status, res.Detail = "error", "unknown scenario "+cmd.Scenario
 		return res
@@ -287,4 +290,12 @@ func (a *Agent) simWebshell(id string) (string, error) {
 		return "", nil
 	}
 	return "本机没有网站目录（" + strings.Join(a.cfg.WebDirs, "、") + "）", nil
+}
+
+// simIntelDNS 查询内置情报域名下带自检编号的子域名。查询必然得到“不存在”，结果不重要：
+// 关键是查询经过网络时被探针看到并匹配情报。
+func simIntelDNS(id string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _ = net.DefaultResolver.LookupHost(ctx, id+"."+simulate.IntelDomain)
 }

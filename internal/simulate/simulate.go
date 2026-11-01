@@ -26,7 +26,11 @@ const (
 	ReverseShell      = "reverse_shell"
 	DownloadExec      = "download_exec"
 	WebshellDrop      = "webshell"
+	IntelDNS          = "intel_dns"
 )
+
+// IntelDomain 是内置在情报中的自检域名（与 store.SimIntelDomain 一致）。
+const IntelDomain = "safe-sim.example.com"
 
 // Scenarios 按展示顺序排列。超时时间覆盖 Agent 默认 30 秒的采集周期两轮以上。
 var Scenarios = []Scenario{
@@ -40,6 +44,8 @@ var Scenarios = []Scenario{
 		model.AlertSuspiciousCommand, 150 * time.Second},
 	{DownloadExec, "下载并执行", "执行一条包含 \"curl … | sh\"（Windows 上为 PowerShell IEX 下载）字样的命令，实际为空操作（不下载、不执行）",
 		model.AlertSuspiciousCommand, 150 * time.Second},
+	{IntelDNS, "情报命中（DNS）", "查询内置情报域名下带自检编号的子域名（保留域名，只会得到“不存在”）；需要探针能看到这台主机的 DNS 流量",
+		model.AlertThreatIntel, 120 * time.Second},
 	{WebshellDrop, "Webshell 落地", "在网站目录写入一个只含注释的 PHP 文件（无任何代码），2 分钟后删除",
 		model.AlertWebshell, 150 * time.Second},
 }

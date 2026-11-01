@@ -17,12 +17,14 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
 	"safe/internal/honeypot"
 	"safe/internal/ids"
 	"safe/internal/model"
+	"safe/internal/netintel"
 	"safe/internal/node"
 	"safe/internal/scanner"
 	"safe/internal/tail"
@@ -93,10 +95,12 @@ func main() {
 	}
 	opts := scanner.Options{Concurrency: *concurrency, Timeout: *timeout}
 
+	ns := newNetState()
 	if *evePath != "" {
-		go runEve(ctx, c, *evePath, *statePath)
+		go runEve(ctx, c, *evePath, *statePath, ns)
+		go runNetFindings(ctx, c, ns)
 	}
-	go runHoneypot(ctx, c)
+	go runHoneypot(ctx, c, ns)
 
 	slog.Info("safe-probe started", "id", c.probeID, "server", *serverURL, "eve", *evePath)
 	ticker := time.NewTicker(*interval)
@@ -158,7 +162,7 @@ const eveInterval = 5 * time.Second
 
 // runEve 持续读取 Suricata 的 eve.json，把告警上报管理中心。
 // 上报成功后才保存读取位置，管理中心不可达时下次从同一位置重试。
-func runEve(ctx context.Context, c *client, path, statePath string) {
+func runEve(ctx context.Context, c *client, path, statePath string, ns *netState) {
 	state := loadTailState(statePath)
 	t := time.NewTicker(eveInterval)
 	defer t.Stop()
@@ -174,6 +178,8 @@ func runEve(ctx context.Context, c *client, path, statePath string) {
 			for _, line := range lines {
 				if ev, ok := ids.ParseEveLine(line); ok {
 					events = append(events, ev)
+				} else if ne, ok := netintel.ParseEve(line); ok {
+					ns.observe(ne)
 				}
 			}
 			if len(events) > 0 {
@@ -227,7 +233,7 @@ func saveTailState(path string, st *tail.State) {
 }
 
 // runHoneypot 按管理中心下发的配置运行蜜罐，并定期上报访问事件。上报失败时事件留在内存中重试（最多 10000 条）。
-func runHoneypot(ctx context.Context, c *client) {
+func runHoneypot(ctx context.Context, c *client, ns *netState) {
 	var mu sync.Mutex
 	var pending []model.HoneypotEvent
 	m := honeypot.New(func(ev model.HoneypotEvent) {
@@ -240,10 +246,15 @@ func runHoneypot(ctx context.Context, c *client) {
 	})
 	fetch := func(ctx context.Context, status map[int]string) (model.HoneypotConfig, error) {
 		var resp struct {
-			Honeypot model.HoneypotConfig `json:"honeypot"`
+			Honeypot     model.HoneypotConfig `json:"honeypot"`
+			IntelVersion int64                `json:"intel_version"`
+			Net          netintel.Config      `json:"net"`
 		}
 		err := c.do(ctx, http.MethodPost, "/api/v1/probe/config?probe_id="+url.QueryEscape(c.probeID),
 			map[string]any{"ips": localIPs(), "status": status}, &resp)
+		if err == nil {
+			ns.update(ctx, c, resp.IntelVersion, resp.Net)
+		}
 		return resp.Honeypot, err
 	}
 	go honeypot.Run(ctx, m, fetch, 15*time.Second)
@@ -283,4 +294,92 @@ func localIPs() []string {
 		}
 	}
 	return ips
+}
+
+// netState 是探针的网络分析：eve 中的 dns / tls / http / flow 记录交给分析器，结果缓存后上报。
+type netState struct {
+	analyzer *netintel.Analyzer
+	version  atomic.Int64 // 已加载的情报版本
+	mu       sync.Mutex
+	pending  []netintel.Finding
+	dropped  int
+}
+
+func newNetState() *netState {
+	return &netState{analyzer: netintel.NewAnalyzer(netintel.DefaultConfig(), nil, time.Local)}
+}
+
+const maxPendingFindings = 5000
+
+func (n *netState) add(fs []netintel.Finding) {
+	if len(fs) == 0 {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, f := range fs {
+		if len(n.pending) >= maxPendingFindings {
+			n.dropped++
+			continue
+		}
+		n.pending = append(n.pending, f)
+	}
+}
+
+func (n *netState) observe(e netintel.Event) { n.add(n.analyzer.Observe(e)) }
+
+// update 应用管理中心下发的分析参数；情报版本变化时重新拉取情报。
+func (n *netState) update(ctx context.Context, c *client, version int64, cfg netintel.Config) {
+	n.analyzer.SetConfig(cfg)
+	if version == n.version.Load() {
+		return
+	}
+	var resp struct {
+		Version    int64                `json:"version"`
+		Indicators []netintel.Indicator `json:"indicators"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/probe/intel?probe_id="+url.QueryEscape(c.probeID), nil, &resp); err != nil {
+		slog.Warn("fetch threat intel", "err", err)
+		return
+	}
+	in := netintel.NewIntel(resp.Indicators)
+	n.analyzer.SetIntel(in)
+	n.version.Store(resp.Version)
+	slog.Info("threat intel loaded", "version", resp.Version, "indicators", in.Len())
+}
+
+// runNetFindings 每分钟评估一次窗口类检测，每 5 秒上报结果；上报失败时保留重试。
+func runNetFindings(ctx context.Context, c *client, n *netState) {
+	send := time.NewTicker(eveInterval)
+	tick := time.NewTicker(time.Minute)
+	defer send.Stop()
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-tick.C:
+			n.add(n.analyzer.Tick(now))
+		case <-send.C:
+		}
+		n.mu.Lock()
+		batch, dropped := n.pending, n.dropped
+		n.pending, n.dropped = nil, 0
+		n.mu.Unlock()
+		if dropped > 0 {
+			slog.Warn("network findings dropped: buffer full", "count", dropped)
+		}
+		if len(batch) == 0 {
+			continue
+		}
+		if err := c.do(ctx, http.MethodPost, "/api/v1/probe/net-findings",
+			map[string]any{"probe_id": c.probeID, "findings": batch}, nil); err != nil {
+			slog.Warn("submit network findings, will retry", "count", len(batch), "err", err)
+			n.mu.Lock()
+			n.pending = append(batch, n.pending...)
+			n.mu.Unlock()
+			continue
+		}
+		slog.Info("network findings reported", "count", len(batch))
+	}
 }

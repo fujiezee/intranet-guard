@@ -75,6 +75,10 @@ const typeLabels = {
   agent_stopped: 'Agent 停止',
   account_change: '账户变更',
   domain_attack: '域攻击',
+  threat_intel: '威胁情报',
+  dns_anomaly: 'DNS 异常',
+  c2_beacon: 'C2 心跳',
+  exfiltration: '数据外传',
 }
 const alerts = ref([])
 const loading = ref(false)

@@ -217,7 +217,7 @@ func TestCatalogCoversAllAlertTypes(t *testing.T) {
 		model.AlertBruteForceSuccess, model.AlertRootLogin, model.AlertFileChanged, model.AlertSuspiciousProcess,
 		model.AlertAgentOffline, model.AlertIDS, model.AlertVuln, model.AlertHoneypot,
 		model.AlertSuspiciousCommand, model.AlertWebshell, model.AlertLateralMovement, model.AlertAgentStopped,
-		model.AlertAccountChange, model.AlertDomainAttack}
+		model.AlertAccountChange, model.AlertDomainAttack, model.AlertThreatIntel, model.AlertDNSAnomaly, model.AlertBeacon, model.AlertExfil}
 	have := map[model.AlertType]bool{}
 	for _, r := range alert.Catalog {
 		have[r.ID] = true

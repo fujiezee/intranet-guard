@@ -83,6 +83,17 @@ func New(cfg Config, st *store.Store) *Server {
 	s.mux.Handle("GET /api/v1/simulations", viewer(s.listSimulations))
 	s.mux.Handle("POST /api/v1/simulations", admin(s.createSimulations))
 
+	s.mux.Handle("GET /api/v1/intel", viewer(s.intelOverview))
+	s.mux.Handle("POST /api/v1/intel/indicators", admin(s.addIndicators))
+	s.mux.Handle("DELETE /api/v1/intel/indicators/{id}", admin(s.deleteIndicator))
+	s.mux.Handle("GET /api/v1/intel/feeds", viewer(s.listFeeds))
+	s.mux.Handle("POST /api/v1/intel/feeds", admin(s.createFeed))
+	s.mux.Handle("PATCH /api/v1/intel/feeds/{id}", admin(s.updateFeed))
+	s.mux.Handle("DELETE /api/v1/intel/feeds/{id}", admin(s.deleteFeed))
+	s.mux.Handle("POST /api/v1/intel/feeds/{id}/refresh", admin(s.refreshFeed))
+	s.mux.Handle("GET /api/v1/intel/net-config", viewer(s.getNetConfig))
+	s.mux.Handle("PUT /api/v1/intel/net-config", admin(s.setNetConfig))
+
 	s.mux.Handle("GET /api/v1/incidents", viewer(s.listIncidents))
 	s.mux.Handle("GET /api/v1/incidents/{id}", viewer(s.getIncident))
 	s.mux.Handle("PATCH /api/v1/incidents/{id}", admin(s.updateIncident))
@@ -126,6 +137,8 @@ func New(cfg Config, st *store.Store) *Server {
 		mux.Handle("POST /api/v1/probe/ids-events", probe(s.submitIDSEvents))
 		mux.Handle("POST /api/v1/probe/config", probe(s.probeConfig))
 		mux.Handle("POST /api/v1/probe/honeypot-events", probe(s.submitHoneypotEvents))
+		mux.Handle("GET /api/v1/probe/intel", probe(s.probeIntel))
+		mux.Handle("POST /api/v1/probe/net-findings", probe(s.submitNetFindings))
 		mux.Handle("POST /api/v1/agent/report", agent(s.agentReport))
 	}
 	nodeRoutes(s.nodeMux,

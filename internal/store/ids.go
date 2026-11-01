@@ -27,6 +27,10 @@ func (s *Store) SaveIDSReport(ctx context.Context, rep model.IDSReport) error {
 	if err := s.events.InsertIDSEvents(ctx, rep.ProbeID, rep.Events); err != nil {
 		return err
 	}
+	intel, err := s.intelSnapshot(ctx) // 事务之前读取：SQLite 只有一个连接
+	if err != nil {
+		return err
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -45,6 +49,18 @@ func (s *Store) SaveIDSReport(ctx context.Context, rep model.IDSReport) error {
 		if al, ok := alert.IDS(ip, ev); ok {
 			if err := insertDedupAlert(ctx, tx, al, now); err != nil {
 				return err
+			}
+		}
+		for _, peer := range []string{ev.SrcIP, ev.DestIP} {
+			if peer == ip {
+				continue
+			}
+			if a, err := netip.ParseAddr(peer); err == nil {
+				if ind, ok := intel.MatchIP(a.Unmap()); ok {
+					if err := insertDedupAlert(ctx, tx, alert.IntelIDS(ip, peer, ev, ind), now); err != nil {
+						return err
+					}
+				}
 			}
 		}
 	}

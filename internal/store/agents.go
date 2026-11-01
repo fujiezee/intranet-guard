@@ -38,6 +38,20 @@ func (s *Store) SaveAgentReport(ctx context.Context, rep model.AgentReport) erro
 	if err != nil {
 		return err
 	}
+	intel, err := s.intelSnapshot(ctx)
+	if err != nil {
+		return err
+	}
+	for _, ev := range rep.Events {
+		if ev.Type != model.EventLoginSuccess && ev.Type != model.EventLoginFailed {
+			continue
+		}
+		if ip, err := netip.ParseAddr(ev.SrcIP); err == nil {
+			if ind, ok := intel.MatchIP(ip.Unmap()); ok {
+				alerts = append(alerts, alert.IntelLogin(hostIP, a.ID, ev, ind))
+			}
+		}
+	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

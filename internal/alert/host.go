@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"safe/internal/model"
+	"safe/internal/netintel"
 )
 
 const (
@@ -197,5 +198,43 @@ func DomainAttack(hostIP, agentID string, ev model.HostEvent) DedupAlert {
 	return DedupAlert{
 		Alert:    model.Alert{Type: model.AlertDomainAttack, Severity: severityOf(ev.Severity), IP: hostIP, Message: msg},
 		DedupKey: "domain:" + agentID + ":" + shortHash(ev.Detail),
+	}
+}
+
+var netFindingTypes = map[string]model.AlertType{"intel": model.AlertThreatIntel, "dga": model.AlertDNSAnomaly,
+	"dns_tunnel": model.AlertDNSAnomaly, "beacon": model.AlertBeacon, "exfil": model.AlertExfil}
+
+// NetFinding 把探针的网络分析结果转为告警，关联到内网中的相关主机。
+func NetFinding(probeID string, f netintel.Finding) DedupAlert {
+	typ, ok := netFindingTypes[f.Kind]
+	if !ok {
+		typ = model.AlertThreatIntel
+	}
+	return DedupAlert{
+		Alert:    model.Alert{Type: typ, Severity: severityOf(f.Severity), IP: f.SrcIP, Message: f.Detail + "（探针 " + probeID + "）"},
+		DedupKey: "net:" + f.Kind + ":" + f.SrcIP + ":" + f.Peer,
+	}
+}
+
+// IntelLogin：登录来源在威胁情报中。
+func IntelLogin(hostIP, agentID string, ev model.HostEvent, ind netintel.Indicator) DedupAlert {
+	what := "登录成功"
+	sev := model.SeverityHigh
+	if ev.Type == model.EventLoginFailed {
+		what, sev = "尝试登录", model.SeverityMedium
+	}
+	return DedupAlert{
+		Alert: model.Alert{Type: model.AlertThreatIntel, Severity: sev, IP: hostIP,
+			Message: fmt.Sprintf("%s (%s) 威胁情报地址 %s %s（用户 %s，情报来源：%s）", hostIP, agentID, ev.SrcIP, what, ev.User, ind.Source)},
+		DedupKey: "intel-login:" + agentID + ":" + ev.SrcIP + ":" + string(ev.Type),
+	}
+}
+
+// IntelIDS：IDS 告警中的对端地址在威胁情报中。
+func IntelIDS(hostIP, peer string, ev model.IDSEvent, ind netintel.Indicator) DedupAlert {
+	return DedupAlert{
+		Alert: model.Alert{Type: model.AlertThreatIntel, Severity: model.SeverityHigh, IP: hostIP,
+			Message: fmt.Sprintf("%s 与威胁情报地址 %s 的通信触发 IDS 规则「%s」（情报来源：%s）", hostIP, peer, ev.Signature, ind.Source)},
+		DedupKey: "intel-ids:" + hostIP + ":" + peer,
 	}
 }
