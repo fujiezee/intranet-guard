@@ -51,7 +51,8 @@ function Quiet([string]$cmdline) { cmd.exe /c "$cmdline >nul 2>&1" | Out-Null }
 # 在新的 Windows PowerShell 5.1 进程中执行控制台给出的命令（与管理员粘贴执行相同）
 function RunInstallCommand([string]$cmd) {
 	$enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
-	& powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc
+	# 子进程输出直接显示，不能混进函数返回值（否则返回的是数组而不是退出码）
+	& powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc | Out-Host
 	return $LASTEXITCODE
 }
 
@@ -74,9 +75,10 @@ try {
 	$info = Api GET '/install-info'
 	Check '提供 Windows Agent 下载' { @($info.available) -contains 'safe-agent-windows-amd64.exe' }
 	Check '生成 Windows 安装命令' { $info.windows_command -like '*install/agent.ps1*' }
-	$token = (Api POST '/enroll-tokens' @{ kind = 'agent'; max_uses = 1; ttl_hours = 1 }).token
+	# 注意：PowerShell 变量名不区分大小写，不能命名为 $token（会覆盖登录会话 $script:Token）
+	$enrollToken = (Api POST '/enroll-tokens' @{ kind = 'agent'; max_uses = 1; ttl_hours = 1 }).token
 	# 测试中把上报周期缩短为 5 秒
-	$cmd = "`$env:SAFE_AGENT_EXTRA='-interval 5s'; " + $info.windows_command.Replace('__TOKEN__', $token)
+	$cmd = "`$env:SAFE_AGENT_EXTRA='-interval 5s'; " + $info.windows_command.Replace('__TOKEN__', $enrollToken)
 	Check '安装命令执行成功' { (RunInstallCommand $cmd) -eq 0 }
 	Check '服务以 LocalSystem 运行' {
 		(Get-Service safe-agent).Status -eq 'Running' -and

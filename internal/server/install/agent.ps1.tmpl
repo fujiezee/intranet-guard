@@ -90,8 +90,12 @@ try {
 
 	if (-not $enrolled) {
 		Say "注册到管理中心 $Server"
-		& $Exe -enroll-only -server $Server -state $State
-		if ($LASTEXITCODE -ne 0) { Die '注册失败：令牌无效、已用完或已过期，或无法连接管理中心' }
+		# Windows PowerShell 5.1 在 Stop 模式下会把原生程序写到 stderr 的日志当作错误终止脚本，这里临时放宽，以退出码为准
+		$ErrorActionPreference = 'Continue'
+		& $Exe -enroll-only -server $Server -state $State 2>&1 | ForEach-Object { Write-Host "    $_" }
+		$code = $LASTEXITCODE
+		$ErrorActionPreference = 'Stop'
+		if ($code -ne 0) { Die '注册失败：令牌无效、已用完或已过期，或无法连接管理中心' }
 	}
 
 	$bin = "`"$Exe`" -server $Server -state `"$State`" -log-file `"$Log`""
@@ -111,8 +115,10 @@ try {
 	Write-Host "    查看状态：Get-Service $Name"
 	Write-Host "    查看日志：Get-Content -Tail 50 '$Log'"
 } finally {
-	Remove-Item Env:SAFE_ENROLL_TOKEN -ErrorAction SilentlyContinue
-	Remove-Item Env:SAFE_ACTION -ErrorAction SilentlyContinue
+	# 用 Test-Path 判断而不是 -ErrorAction SilentlyContinue：后者在变量不存在时会让 $? 为假，
+	# 通过 powershell -Command 执行时退出码会变成 1
+	if (Test-Path Env:SAFE_ENROLL_TOKEN) { Remove-Item Env:SAFE_ENROLL_TOKEN }
+	if (Test-Path Env:SAFE_ACTION) { Remove-Item Env:SAFE_ACTION }
 	[Net.ServicePointManager]::ServerCertificateValidationCallback = $null
 }
 }
