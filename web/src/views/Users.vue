@@ -24,7 +24,8 @@
       <h3>{{ t('API 令牌（只读）') }}</h3>
       <el-button @click="tokenDialog = true">{{ t('新建令牌') }}</el-button>
     </div>
-    <p class="hint">{{ t('用于 MCP 等外部工具查询数据。令牌只能读取，不能执行任何操作。') }}</p>
+    <p class="hint">{{ t('用于 MCP 等外部工具查询数据。令牌只能读取，不能执行任何操作。') }}
+      <router-link :to="{ path: '/help', hash: '#mcp' }">{{ t('接入步骤') }}</router-link></p>
     <el-table :data="tokens" stripe>
       <el-table-column prop="name" :label="t('名称')" />
       <el-table-column prop="created_by" :label="t('创建人')" width="140" />
@@ -46,7 +47,7 @@
     </el-dialog>
     <el-dialog v-model="tokenShown" :title="t('令牌已创建')" width="640px" @closed="newToken = ''">
       <el-alert type="warning" :closable="false" show-icon :title="t('令牌只显示这一次，请立即保存。')" />
-      <p>{{ t('把下面的配置加入 MCP 客户端：') }}</p>
+      <p>{{ t('把下面的配置加入 MCP 客户端：') }} <router-link :to="{ path: '/help', hash: '#mcp' }" @click="tokenShown = false">{{ t('接入步骤') }}</router-link></p>
       <pre class="config">{{ mcpConfig }}</pre>
     </el-dialog>
 

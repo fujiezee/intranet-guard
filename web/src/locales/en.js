@@ -21,6 +21,7 @@ export default {
   "API 令牌（只读）": "API tokens (read-only)",
   "新建令牌": "New token",
   "用于 MCP 等外部工具查询数据。令牌只能读取，不能执行任何操作。": "For MCP and other external tools that query data. Tokens can only read; they cannot perform any action.",
+  "接入步骤": "Setup steps",
   "创建人": "Created by",
   "最近使用": "Last used",
   "吊销": "Revoke",

@@ -155,6 +155,18 @@ FTP 匿名登录，管理中心同时按 Banner 匹配已知版本漏洞。结�
 
 前端开发：`cd web && npm run dev`（自动把 `/api` 代理到 `127.0.0.1:8080`）。
 
+## AI 助手（MCP 与 Skill）
+
+`safe-mcp` 让 Claude 等 AI 助手用只读令牌查询资产、事件、告警和漏洞，不能执行任何操作。
+在「用户管理」创建令牌后：
+
+```bash
+go build -o safe-mcp ./cmd/mcp
+claude mcp add intranet-guard -e SAFE_URL=https://管理中心地址:端口 -e SAFE_API_TOKEN=令牌 -- ./safe-mcp
+```
+
+完整步骤、其他客户端和 Skill 见[使用指南](docs/GUIDE.md#mcp)。
+
 ## API
 
 除登录外，所有接口都需要 `Authorization: Bearer <token>`：
