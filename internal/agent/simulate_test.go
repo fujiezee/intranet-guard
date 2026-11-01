@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -46,6 +47,11 @@ func TestSimulations(t *testing.T) {
 		}
 	}
 
+	// 测试进程：用当前测试程序代替 Agent，确认参数校验。
+	if code := childExitCode(t, "abc"); code != 2 {
+		t.Errorf("invalid seconds: exit %d", code)
+	}
+
 	// 蜜罐：发送自检标记并收到确认。
 	ln, _ := net.Listen("tcp", "127.0.0.1:0")
 	defer ln.Close()
@@ -76,4 +82,25 @@ func TestSimulations(t *testing.T) {
 			t.Errorf("command %+v accepted: %+v", bad, res)
 		}
 	}
+}
+
+// childExitCode 以自检测试进程的方式运行当前测试二进制，返回退出码。
+func childExitCode(t *testing.T, secs string) int {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run=TestSimulationChildHelper")
+	cmd.Env = append(os.Environ(), "SAFE_SIM_CHILD="+secs)
+	err := cmd.Run()
+	if ee, ok := err.(*exec.ExitError); ok {
+		return ee.ExitCode()
+	}
+	return 0
+}
+
+func TestSimulationChildHelper(t *testing.T) {
+	secs := os.Getenv("SAFE_SIM_CHILD")
+	if secs == "" {
+		t.Skip("helper process")
+	}
+	os.Args = []string{os.Args[0], SimulationChildArg, secs}
+	RunSimulationChildIfRequested()
 }

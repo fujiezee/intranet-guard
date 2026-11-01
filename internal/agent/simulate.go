@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -74,29 +75,37 @@ func (a *Agent) simFile(id string) (string, error) {
 	return "", nil
 }
 
-// simProcess 把系统 sleep 复制到临时目录运行，稍后结束并删除。
+// SimulationChildArg 是"临时目录执行"自检启动测试进程用的参数：测试进程就是 Agent 自身的副本，
+// 收到该参数后只等待指定秒数然后退出。不使用系统 sleep：uutils（Ubuntu 26.04 起）、BusyBox 等多合一程序
+// 按文件名分派命令，复制改名后无法运行。
+const SimulationChildArg = "-simulation-child-sleep"
+
+// RunSimulationChildIfRequested 在 main 最开始调用：如果本进程是自检测试进程，等待后退出，不会返回。
+func RunSimulationChildIfRequested() {
+	if len(os.Args) == 3 && os.Args[1] == SimulationChildArg {
+		secs, err := strconv.Atoi(os.Args[2])
+		if err != nil || secs <= 0 || secs > 600 {
+			os.Exit(2)
+		}
+		time.Sleep(time.Duration(secs) * time.Second)
+		os.Exit(0)
+	}
+}
+
+// simProcess 把 Agent 自身复制到临时目录运行（只等待，不做任何事），稍后结束并删除。
 func simProcess(id string) (string, error) {
 	if runtime.GOOS != "linux" {
 		return "进程检测仅支持 Linux", nil
 	}
-	src := ""
-	for _, p := range []string{"/bin/sleep", "/usr/bin/sleep"} {
-		if _, err := os.Stat(p); err == nil {
-			src = p
-			break
-		}
-	}
-	if src == "" {
-		return "找不到 sleep 程序", nil
-	}
-	dst := filepath.Join(simTmpDir, "safe-sim-"+id)
-	if err := copyFile(src, dst, 0o700); err != nil {
+	self, err := os.Executable()
+	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command(dst, fmt.Sprint(int(simDuration.Seconds())))
-	// 进程名保持 sleep：uutils / BusyBox 这类多合一程序按 argv[0] 决定执行哪个命令，
-	// 改名后会直接报错退出。可执行文件路径仍是 /tmp/safe-sim-<编号>，检测看到的是这个路径。
-	cmd.Args[0] = filepath.Base(src)
+	dst := filepath.Join(simTmpDir, "safe-sim-"+id)
+	if err := copyFile(self, dst, 0o700); err != nil {
+		return "", err
+	}
+	cmd := exec.Command(dst, SimulationChildArg, strconv.Itoa(int(simDuration.Seconds())))
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {

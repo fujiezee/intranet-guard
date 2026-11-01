@@ -19,6 +19,7 @@ import (
 )
 
 func main() {
+	agent.RunSimulationChildIfRequested()
 	serverURL := flag.String("server", "https://127.0.0.1:8443", "management server node endpoint URL")
 	id := flag.String("id", "", "agent ID (default: hostname)")
 	statePath := flag.String("state", "/var/lib/safe-agent/state.json", "state file path")
