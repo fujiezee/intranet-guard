@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.26.10" # 与 go.mod 的 toolchain 一致；低于此版本的标准库有已知漏洞
       - name: 没有源码被 .gitignore 忽略
         run: |
           ignored=$(git ls-files --others --ignored --exclude-standard -- '*.go' '*.vue' '*.js' '*.sh' '*.tmpl' | grep -v '^web/node_modules/' || true)
@@ -82,7 +82,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: "1.26.10" # 与 go.mod 的 toolchain 一致；低于此版本的标准库有已知漏洞
       - uses: actions/setup-node@v4
         with:
           node-version: 22
