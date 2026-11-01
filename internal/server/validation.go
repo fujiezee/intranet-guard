@@ -9,7 +9,9 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
+	"safe/internal/alert"
 	"safe/internal/model"
 	"safe/internal/scanner"
 	"safe/internal/store"
@@ -135,6 +137,7 @@ type createValidationRequest struct {
 	Targets      []string `json:"targets"`
 	Ports        []int    `json:"ports"`
 	WeakPassword bool     `json:"weak_password"`
+	Nuclei       bool     `json:"nuclei"`
 }
 
 func (s *Server) createValidationRun(w http.ResponseWriter, r *http.Request) {
@@ -166,13 +169,13 @@ func (s *Server) createValidationRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	run, err := s.store.CreateValidationRun(r.Context(), model.ValidationRun{Name: req.Name, ProbeID: req.ProbeID, Targets: req.Targets,
-		Ports: req.Ports, WeakPassword: req.WeakPassword, CreatedBy: u})
+		Ports: req.Ports, WeakPassword: req.WeakPassword, Nuclei: req.Nuclei, CreatedBy: u})
 	if err != nil {
 		writeInternal(w, err)
 		return
 	}
-	s.audit(r, "", "validation.create", run.ID, fmt.Sprintf("probe=%s weak_password=%v targets=%v", run.ProbeID, run.WeakPassword, run.Targets), true)
-	if !run.WeakPassword { // 低风险：发起的管理员就是批准人
+	s.audit(r, "", "validation.create", run.ID, fmt.Sprintf("probe=%s weak_password=%v nuclei=%v targets=%v", run.ProbeID, run.WeakPassword, run.Nuclei, run.Targets), true)
+	if !run.WeakPassword && !run.Nuclei { // 低风险：发起的管理员就是批准人
 		if err := s.store.StartValidationRun(r.Context(), run.ID, u, newID()); err != nil {
 			writeInternal(w, err)
 			return
@@ -268,4 +271,75 @@ func (s *Server) validationReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"run": run, "counts": counts, "findings": findings, "fixed": fixed})
+}
+
+// coverageWindow：更早的自检不再算数，规则、Agent 和环境都可能已经变了。
+const coverageWindow = 30 * 24 * time.Hour
+
+type ruleCoverage struct {
+	ID      model.AlertType `json:"id"`
+	Name    string          `json:"name"`
+	Tactic  string          `json:"tactic"`
+	State   string          `json:"state"` // verified / failed / not_run / no_scenario
+	LastRun *time.Time      `json:"last_run,omitempty"`
+}
+
+// coverageOf 把规则和自检结果对应起来：每个场景以最近一次有结果的自检为准，不适用和出错不算验证过。
+func coverageOf(rules []alert.Rule, sims []model.Simulation, now time.Time) map[string]any {
+	latest := map[string]model.Simulation{}
+	var total, passed int64
+	for _, sim := range sims { // 按时间倒序
+		if sim.Status != model.SimPassed && sim.Status != model.SimFailed {
+			continue
+		}
+		if sim.FinishedAt == nil || now.Sub(*sim.FinishedAt) > coverageWindow {
+			continue
+		}
+		if _, ok := latest[sim.Scenario]; !ok {
+			latest[sim.Scenario] = sim
+		}
+		if sim.Status == model.SimPassed {
+			total += sim.LatencyMs
+			passed++
+		}
+	}
+	out := make([]ruleCoverage, 0, len(rules))
+	summary := map[string]int{}
+	byTactic := map[string]int{}
+	for _, rule := range rules {
+		c := ruleCoverage{ID: rule.ID, Name: rule.Name, Tactic: rule.Tactic, State: "no_scenario"}
+		if rule.Simulation != "" {
+			c.State = "not_run"
+			if sim, ok := latest[rule.Simulation]; ok {
+				c.State, c.LastRun = "failed", sim.FinishedAt
+				if sim.Status == model.SimPassed {
+					c.State = "verified"
+				}
+			}
+		}
+		summary[c.State]++
+		out = append(out, c)
+		for _, tactic := range strings.Split(rule.Tactic, " / ") {
+			byTactic[tactic]++
+		}
+	}
+	tactics := make([]map[string]any, 0, len(alert.Tactics))
+	for _, tactic := range alert.Tactics {
+		tactics = append(tactics, map[string]any{"tactic": tactic, "rules": byTactic[tactic]})
+	}
+	var avg int64
+	if passed > 0 {
+		avg = total / passed
+	}
+	return map[string]any{"rules": out, "summary": summary, "tactics": tactics, "avg_latency_ms": avg,
+		"window_days": int(coverageWindow.Hours() / 24)}
+}
+
+func (s *Server) detectionCoverage(w http.ResponseWriter, r *http.Request) {
+	sims, err := s.store.ListSimulations(r.Context(), 2000)
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, coverageOf(alert.Catalog, sims, time.Now()))
 }

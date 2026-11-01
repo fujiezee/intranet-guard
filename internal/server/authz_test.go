@@ -20,6 +20,7 @@ var viewerRoutes = map[string]bool{
 	"GET /api/v1/stats":                       true,
 	"GET /api/v1/tasks":                       true,
 	"GET /api/v1/tasks/{id}":                  true,
+	"GET /api/v1/validation/coverage":         true,
 	"GET /api/v1/validation/scopes":           true,
 	"GET /api/v1/validation/runs":             true,
 	"GET /api/v1/validation/runs/{id}/report": true,

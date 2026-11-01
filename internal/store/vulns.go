@@ -8,6 +8,7 @@ import (
 
 	"safe/internal/alert"
 	"safe/internal/model"
+	"safe/internal/vuln"
 )
 
 // saveChecks 按检查结果维护漏洞生命周期，返回需要告警的新发现 / 复发漏洞：
@@ -60,6 +61,23 @@ func fixVulns(ctx context.Context, tx *Tx, ip string, port int, checkID string, 
 		WHERE ip = ? AND port = ? AND (? = '' OR check_id = ?) AND status IN (?, ?)`,
 		model.VulnFixed, at, ip, port, checkID, checkID, model.VulnOpen, model.VulnIgnored)
 	return err
+}
+
+// fixNucleiFindings：Nuclei 只报告命中的模板，不报告通过的。完整运行之后，这些主机上这次没有再出现的发现视为已修复。
+func fixNucleiFindings(ctx context.Context, tx *Tx, r model.ScanReport, at time.Time) error {
+	var nuclei bool
+	err := tx.QueryRowContext(ctx, `SELECT nuclei FROM tasks WHERE id = ?`, r.TaskID).Scan(&nuclei)
+	if err != nil || !nuclei {
+		return err
+	}
+	for _, a := range r.Assets {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE vulns SET status = ?, fixed_at = ? WHERE ip = ? AND check_id LIKE ? AND last_seen < ? AND status IN (?, ?)`,
+			model.VulnFixed, at, a.IP, vuln.NucleiPrefix+"%", at, model.VulnOpen, model.VulnIgnored); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type VulnFilter struct {

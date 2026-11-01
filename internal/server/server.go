@@ -123,6 +123,7 @@ func New(cfg Config, st *store.Store) *Server {
 	s.mux.Handle("GET /api/v1/validation/scopes", viewer(s.listValidationScopes))
 	s.mux.Handle("POST /api/v1/validation/scopes", admin(s.addValidationScope))
 	s.mux.Handle("DELETE /api/v1/validation/scopes/{id}", admin(s.deleteValidationScope))
+	s.mux.Handle("GET /api/v1/validation/coverage", viewer(s.detectionCoverage))
 	s.mux.Handle("GET /api/v1/validation/runs", viewer(s.listValidationRuns))
 	s.mux.Handle("POST /api/v1/validation/runs", admin(s.createValidationRun))
 	s.mux.Handle("POST /api/v1/validation/runs/{id}/approve", admin(s.approveValidationRun))

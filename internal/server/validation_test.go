@@ -2,10 +2,13 @@ package server
 
 import (
 	"net/http"
+	"reflect"
 	"testing"
 	"time"
 
+	"safe/internal/alert"
 	"safe/internal/model"
+	"safe/internal/vuln"
 )
 
 func TestSecurityValidation(t *testing.T) {
@@ -146,5 +149,97 @@ func TestValidationReport(t *testing.T) {
 	got = finish(start("10.1.0.5"), redis("10.1.0.5", false))
 	if len(got.Findings) != 0 || len(got.Fixed) != 1 {
 		t.Fatalf("recheck: %+v", got)
+	}
+}
+
+func TestCoverageOf(t *testing.T) {
+	now := time.Now()
+	ago := func(d time.Duration) *time.Time { v := now.Add(-d); return &v }
+	rules := []alert.Rule{
+		{ID: "a", Name: "a", Tactic: "执行 / 持久化", Simulation: "pass"},
+		{ID: "b", Name: "b", Tactic: "执行", Simulation: "fail"},
+		{ID: "c", Name: "c", Tactic: "发现", Simulation: "old"},
+		{ID: "d", Name: "d", Tactic: "发现", Simulation: "na"},
+		{ID: "e", Name: "e", Tactic: "发现"},
+	}
+	sims := []model.Simulation{ // 按时间倒序
+		{Scenario: "pass", Status: model.SimPassed, LatencyMs: 3000, FinishedAt: ago(time.Hour)},
+		{Scenario: "pass", Status: model.SimFailed, FinishedAt: ago(2 * time.Hour)},
+		{Scenario: "fail", Status: model.SimFailed, FinishedAt: ago(time.Hour)},
+		{Scenario: "fail", Status: model.SimPassed, LatencyMs: 1000, FinishedAt: ago(2 * time.Hour)},
+		{Scenario: "old", Status: model.SimPassed, LatencyMs: 9000, FinishedAt: ago(31 * 24 * time.Hour)},
+		{Scenario: "na", Status: model.SimNotApplicable, FinishedAt: ago(time.Hour)},
+	}
+	got := coverageOf(rules, sims, now)
+	states := map[model.AlertType]string{}
+	for _, c := range got["rules"].([]ruleCoverage) {
+		states[c.ID] = c.State
+	}
+	want := map[model.AlertType]string{"a": "verified", "b": "failed", "c": "not_run", "d": "not_run", "e": "no_scenario"}
+	if !reflect.DeepEqual(states, want) {
+		t.Errorf("states: %v", states)
+	}
+	if got["avg_latency_ms"] != int64(2000) {
+		t.Errorf("latency: %v", got["avg_latency_ms"])
+	}
+	counts := map[string]int{}
+	for _, x := range got["tactics"].([]map[string]any) {
+		counts[x["tactic"].(string)] = x["rules"].(int)
+	}
+	if counts["执行"] != 2 || counts["持久化"] != 1 || counts["影响"] != 0 {
+		t.Errorf("tactics: %v", counts)
+	}
+}
+
+// Nuclei 和弱口令一样需要批准；任务带上 nuclei 标记；完整运行后没有再出现的发现视为已修复，失败的运行不算。
+func TestValidationNuclei(t *testing.T) {
+	ts, admin := newTestServer(t)
+	call(t, ts, admin, "POST", "/api/v1/users", createUserRequest{Username: "second", Password: "second-password", Role: model.RoleAdmin}, nil)
+	second := login(t, ts, "second", "second-password")
+	call(t, ts, admin, "POST", "/api/v1/validation/scopes", map[string]string{"cidr": "10.1.0.0/24", "note": "测试"}, nil)
+	finding := model.CheckResult{IP: "10.1.0.5", Port: 80, CheckID: vuln.NucleiPrefix + "demo", Vulnerable: true, Title: "demo", Severity: model.SeverityHigh}
+	scan := func(errMsg string, checks ...model.CheckResult) {
+		t.Helper()
+		var run model.ValidationRun
+		call(t, ts, admin, "POST", "/api/v1/validation/runs", createValidationRequest{Name: "n", ProbeID: "seg-a", Targets: []string{"10.1.0.5"}, Nuclei: true}, &run)
+		if run.Status != model.ValAwaitingApproval {
+			t.Fatalf("nuclei run not awaiting approval: %+v", run)
+		}
+		if code := call(t, ts, second, "POST", "/api/v1/validation/runs/"+run.ID+"/approve", nil, nil); code != http.StatusNoContent {
+			t.Fatalf("approve: %d", code)
+		}
+		var tasks []model.ScanTask
+		call(t, ts, probeToken, "GET", "/api/v1/probe/tasks?probe_id=seg-a", nil, &tasks)
+		if len(tasks) != 1 || !tasks[0].Nuclei {
+			t.Fatalf("claimed: %+v", tasks)
+		}
+		rep := model.ScanReport{TaskID: tasks[0].ID, ProbeID: "seg-a", Assets: []model.Asset{{IP: "10.1.0.5", Ports: []model.Port{{Port: 80, Proto: "tcp"}}}},
+			Checks: checks, Error: errMsg, StartedAt: time.Now(), FinishedAt: time.Now()}
+		if code := call(t, ts, probeToken, "POST", "/api/v1/probe/reports", rep, nil); code != http.StatusNoContent {
+			t.Fatalf("report: %d", code)
+		}
+	}
+	status := func() model.VulnStatus {
+		t.Helper()
+		var out []model.Vuln
+		call(t, ts, admin, "GET", "/api/v1/vulns", nil, &out)
+		for _, v := range out {
+			if v.CheckID == finding.CheckID {
+				return v.Status
+			}
+		}
+		return ""
+	}
+	scan("", finding)
+	if s := status(); s != model.VulnOpen {
+		t.Fatalf("after finding: %q", s)
+	}
+	scan("nuclei: exit status 1")
+	if s := status(); s != model.VulnOpen {
+		t.Errorf("failed run closed a finding: %q", s)
+	}
+	scan("")
+	if s := status(); s != model.VulnFixed {
+		t.Errorf("not fixed after clean run: %q", s)
 	}
 }

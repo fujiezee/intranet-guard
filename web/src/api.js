@@ -102,6 +102,7 @@ export const api = {
   validationScopes: () => request('GET', '/validation/scopes'),
   addValidationScope: (s) => request('POST', '/validation/scopes', s),
   deleteValidationScope: (id) => request('DELETE', `/validation/scopes/${id}`),
+  detectionCoverage: () => request('GET', '/validation/coverage'),
   validationRuns: () => request('GET', '/validation/runs'),
   createValidationRun: (r) => request('POST', '/validation/runs', r),
   approveValidationRun: (id) => request('POST', `/validation/runs/${id}/approve`),

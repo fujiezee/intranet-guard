@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 	baseline   BOOLEAN NOT NULL DEFAULT FALSE,
 	kind       TEXT NOT NULL DEFAULT 'discovery',
 	weak_password BOOLEAN NOT NULL DEFAULT FALSE,
+	nuclei     BOOLEAN NOT NULL DEFAULT FALSE,
 	status     TEXT NOT NULL,
 	error      TEXT NOT NULL DEFAULT '',
 	created_at TIMESTAMP NOT NULL,
@@ -328,6 +329,7 @@ CREATE TABLE IF NOT EXISTS validation_runs (
 	targets       TEXT NOT NULL,
 	ports         TEXT NOT NULL,
 	weak_password BOOLEAN NOT NULL,
+	nuclei        BOOLEAN NOT NULL DEFAULT FALSE,
 	status        TEXT NOT NULL,
 	task_id       TEXT NOT NULL DEFAULT '',
 	created_by    TEXT NOT NULL,
@@ -404,6 +406,7 @@ var addedColumns = []struct{ table, column, def string }{
 	{"alerts", "dedup_key", "TEXT NOT NULL DEFAULT ''"},
 	{"tasks", "kind", "TEXT NOT NULL DEFAULT 'discovery'"},
 	{"tasks", "weak_password", "BOOLEAN NOT NULL DEFAULT FALSE"},
+	{"tasks", "nuclei", "BOOLEAN NOT NULL DEFAULT FALSE"},
 	{"alerts", "resolution", "TEXT NOT NULL DEFAULT ''"},
 	{"alerts", "resolution_note", "TEXT NOT NULL DEFAULT ''"},
 	{"agents", "capabilities", "TEXT NOT NULL DEFAULT ''"},
@@ -459,12 +462,12 @@ func (s *Store) CreateTask(ctx context.Context, t model.ScanTask) error {
 	return err
 }
 
-const taskColumns = `id, probe_id, targets, ports, baseline, kind, weak_password, status, error, created_at, updated_at`
+const taskColumns = `id, probe_id, targets, ports, baseline, kind, weak_password, nuclei, status, error, created_at, updated_at`
 
 func scanTask(row interface{ Scan(...any) error }) (model.ScanTask, error) {
 	var t model.ScanTask
 	var targets, ports string
-	if err := row.Scan(&t.ID, &t.ProbeID, &targets, &ports, &t.Baseline, &t.Kind, &t.WeakPassword,
+	if err := row.Scan(&t.ID, &t.ProbeID, &targets, &ports, &t.Baseline, &t.Kind, &t.WeakPassword, &t.Nuclei,
 		&t.Status, &t.Error, &t.CreatedAt, &t.UpdatedAt); err != nil {
 		return t, err
 	}
@@ -624,6 +627,8 @@ func (s *Store) SaveReport(ctx context.Context, r model.ScanReport) error {
 	status := model.TaskDone
 	if r.Error != "" {
 		status = model.TaskFailed
+	} else if err := fixNucleiFindings(ctx, tx, r, seen); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE tasks SET status = ?, error = ?, updated_at = ? WHERE id = ?`,
 		status, r.Error, time.Now().UTC(), r.TaskID); err != nil {

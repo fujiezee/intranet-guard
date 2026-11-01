@@ -137,6 +137,13 @@ func runTask(ctx context.Context, c *client, t model.ScanTask, opts scanner.Opti
 		rep.Assets = scanner.Scan(ctx, targets, opts)
 		if t.Kind == model.TaskVuln {
 			rep.Checks = vuln.Run(ctx, rep.Assets, vuln.Options{WeakPassword: t.WeakPassword})
+			if t.Nuclei {
+				found, err := vuln.RunNuclei(ctx, rep.Assets)
+				rep.Checks = append(rep.Checks, found...)
+				if err != nil {
+					rep.Error = err.Error()
+				}
+			}
 		}
 	}
 	if ctx.Err() != nil {

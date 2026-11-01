@@ -26,7 +26,7 @@ var copyTables = []struct {
 
 // boolColumns 在 SQLite 里存为 0/1，写入 PostgreSQL 时转换为布尔值。
 var boolColumns = map[string]bool{
-	"tasks.baseline": true, "tasks.weak_password": true, "ids_events.suppressed": true,
+	"tasks.baseline": true, "tasks.weak_password": true, "tasks.nuclei": true, "validation_runs.weak_password": true, "validation_runs.nuclei": true, "ids_events.suppressed": true,
 	"notify_channels.enabled": true, "alerts.notified": true, "audit_log.success": true, "honeypots.enabled": true, "intel_feeds.enabled": true,
 }
 

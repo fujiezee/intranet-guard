@@ -45,11 +45,13 @@ type ScanTask struct {
 	Baseline bool     `json:"baseline"` // 基线扫描：只建立资产台账，不产生告警
 	Kind     TaskKind `json:"kind"`
 	// WeakPassword 为 true 时漏洞检测会尝试少量常见弱口令（会产生真实的登录失败记录）。
-	WeakPassword bool       `json:"weak_password"`
-	Status       TaskStatus `json:"status"`
-	Error        string     `json:"error,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	WeakPassword bool `json:"weak_password"`
+	// Nuclei 为 true 时探针对开放端口运行非破坏性的 Nuclei 模板。
+	Nuclei    bool       `json:"nuclei"`
+	Status    TaskStatus `json:"status"`
+	Error     string     `json:"error,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // ScanReport 是探针执行完任务后上报的结果。
@@ -337,6 +339,7 @@ type ValidationRun struct {
 	Targets      []string   `json:"targets"`
 	Ports        []int      `json:"ports"`
 	WeakPassword bool       `json:"weak_password"`
+	Nuclei       bool       `json:"nuclei"`
 	Status       string     `json:"status"`
 	TaskID       string     `json:"task_id,omitempty"`
 	Error        string     `json:"error,omitempty"`

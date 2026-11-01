@@ -65,13 +65,13 @@ func (s *Store) CreateValidationRun(ctx context.Context, r model.ValidationRun) 
 	targets, _ := json.Marshal(r.Targets)
 	ports, _ := json.Marshal(r.Ports)
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO validation_runs (id, name, probe_id, targets, ports, weak_password, status, created_by, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		r.ID, r.Name, r.ProbeID, string(targets), string(ports), r.WeakPassword, r.Status, r.CreatedBy, r.CreatedAt)
+		INSERT INTO validation_runs (id, name, probe_id, targets, ports, weak_password, nuclei, status, created_by, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		r.ID, r.Name, r.ProbeID, string(targets), string(ports), r.WeakPassword, r.Nuclei, r.Status, r.CreatedBy, r.CreatedAt)
 	return r, err
 }
 
-const validationColumns = `r.id, r.name, r.probe_id, r.targets, r.ports, r.weak_password, r.status, r.task_id, r.created_by,
+const validationColumns = `r.id, r.name, r.probe_id, r.targets, r.ports, r.weak_password, r.nuclei, r.status, r.task_id, r.created_by,
 	r.approved_by, r.created_at, r.started_at, COALESCE(t.status, ''), COALESCE(t.error, '')`
 
 // 只保存“等待批准 / 已开始”，开始之后的状态来自扫描任务，不必同步两份。
@@ -80,7 +80,7 @@ func scanValidationRun(row interface{ Scan(...any) error }) (model.ValidationRun
 	var targets, ports, stored string
 	var taskStatus model.TaskStatus
 	var started sql.NullTime
-	err := row.Scan(&r.ID, &r.Name, &r.ProbeID, &targets, &ports, &r.WeakPassword, &stored, &r.TaskID, &r.CreatedBy,
+	err := row.Scan(&r.ID, &r.Name, &r.ProbeID, &targets, &ports, &r.WeakPassword, &r.Nuclei, &stored, &r.TaskID, &r.CreatedBy,
 		&r.ApprovedBy, &r.CreatedAt, &started, &taskStatus, &r.Error)
 	if err != nil {
 		return r, err
@@ -133,7 +133,7 @@ func (s *Store) ListValidationRuns(ctx context.Context, limit int) ([]model.Vali
 	return out, rows.Err()
 }
 
-// StartValidationRun 批准并下发验证任务。弱口令检测会产生真实的登录失败，需要另一位管理员批准；
+// StartValidationRun 批准并下发验证任务。弱口令和 Nuclei 会对目标产生真实影响，需要另一位管理员批准；
 // 系统只有一位管理员时由其本人确认，操作留在审计日志中。
 func (s *Store) StartValidationRun(ctx context.Context, id, by, taskID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -143,16 +143,16 @@ func (s *Store) StartValidationRun(ctx context.Context, id, by, taskID string) e
 	defer tx.Rollback()
 
 	var createdBy, probeID, targets, ports string
-	var weak bool
+	var weak, nuclei bool
 	err = tx.QueryRowContext(ctx, `
-		SELECT created_by, probe_id, targets, ports, weak_password FROM validation_runs WHERE id = ? AND status = ? AND created_at > ?`,
-		id, model.ValAwaitingApproval, time.Now().UTC().Add(-ValidationApprovalTTL)).Scan(&createdBy, &probeID, &targets, &ports, &weak)
+		SELECT created_by, probe_id, targets, ports, weak_password, nuclei FROM validation_runs WHERE id = ? AND status = ? AND created_at > ?`,
+		id, model.ValAwaitingApproval, time.Now().UTC().Add(-ValidationApprovalTTL)).Scan(&createdBy, &probeID, &targets, &ports, &weak, &nuclei)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return err
 	}
-	if weak && createdBy == by {
+	if (weak || nuclei) && createdBy == by {
 		var admins int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE role = ?`, model.RoleAdmin).Scan(&admins); err != nil {
 			return err
@@ -172,9 +172,9 @@ func (s *Store) StartValidationRun(ctx context.Context, id, by, taskID string) e
 		return ErrNotFound
 	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO tasks (id, probe_id, targets, ports, baseline, kind, weak_password, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, FALSE, ?, ?, ?, ?, ?)`,
-		taskID, probeID, targets, ports, model.TaskVuln, weak, model.TaskPending, now, now); err != nil {
+		INSERT INTO tasks (id, probe_id, targets, ports, baseline, kind, weak_password, nuclei, status, created_at, updated_at)
+		VALUES (?, ?, ?, ?, FALSE, ?, ?, ?, ?, ?, ?)`,
+		taskID, probeID, targets, ports, model.TaskVuln, weak, nuclei, model.TaskPending, now, now); err != nil {
 		return err
 	}
 	return tx.Commit()

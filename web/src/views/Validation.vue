@@ -27,14 +27,41 @@
       </el-table>
     </el-card>
 
+    <el-card v-if="coverage" shadow="never" class="card">
+      <template #header>
+        <div class="card-header">
+          {{ t('检测覆盖') }}
+          <span class="hint">{{ t('最近 {p0} 天攻击模拟自检的结果。通过表示模拟动作能触发告警，不代表能发现真实攻击。', { p0: coverage.window_days }) }}</span>
+        </div>
+      </template>
+      <div class="summary">
+        <el-tag type="success">{{ t('已验证 {p0}', { p0: coverage.summary.verified || 0 }) }}</el-tag>
+        <el-tag type="danger">{{ t('未通过 {p0}', { p0: coverage.summary.failed || 0 }) }}</el-tag>
+        <el-tag type="warning">{{ t('待自检 {p0}', { p0: coverage.summary.not_run || 0 }) }}</el-tag>
+        <el-tag type="info">{{ t('无自检场景 {p0}', { p0: coverage.summary.no_scenario || 0 }) }}</el-tag>
+        <span v-if="coverage.avg_latency_ms" class="hint">{{ t('平均检出耗时 {p0} 秒', { p0: (coverage.avg_latency_ms / 1000).toFixed(1) }) }}</span>
+      </div>
+      <el-alert v-if="blind.length" type="error" :closable="false" show-icon class="card"
+        :title="t('没有检测规则的 ATT&CK 战术：{p0}', { p0: blind.join('、') })" />
+      <el-table :data="coverage.rules" size="small" max-height="360">
+        <el-table-column prop="name" :label="t('规则')" min-width="160" />
+        <el-table-column prop="tactic" :label="t('ATT&CK 战术')" min-width="150" />
+        <el-table-column :label="t('结果')" width="110">
+          <template #default="{ row }"><el-tag size="small" :type="coverageMap[row.state].type">{{ coverageMap[row.state].label }}</el-tag></template>
+        </el-table-column>
+        <el-table-column :label="t('最近自检')" width="170"><template #default="{ row }">{{ row.last_run ? formatTime(row.last_run) : '-' }}</template></el-table-column>
+      </el-table>
+    </el-card>
+
     <el-table :data="runs" v-loading="loading" stripe :empty-text="t('还没有验证任务')">
       <el-table-column prop="name" :label="t('名称')" min-width="160" />
       <el-table-column :label="t('目标')" min-width="180"><template #default="{ row }"><span class="mono">{{ row.targets.join(', ') }}</span></template></el-table-column>
       <el-table-column prop="probe_id" :label="t('探针')" width="100" />
-      <el-table-column :label="t('检查项')" width="130">
+      <el-table-column :label="t('检查项')" width="170">
         <template #default="{ row }">
           <el-tag size="small" type="warning">{{ t('漏洞') }}</el-tag>
           <el-tag v-if="row.weak_password" size="small" type="danger" class="tag-gap">{{ t('弱口令') }}</el-tag>
+          <el-tag v-if="row.nuclei" size="small" type="danger" class="tag-gap">Nuclei</el-tag>
         </template>
       </el-table-column>
       <el-table-column :label="t('状态')" width="110">
@@ -79,12 +106,16 @@
           <el-switch v-model="form.weak_password" />
           <span class="hint inline">{{ t('尝试少量常见口令（SSH / FTP / Redis）') }}</span>
         </el-form-item>
-        <el-alert v-if="form.weak_password" type="warning" :closable="false" show-icon
-          :title="t('会产生真实的登录失败记录，可能触发账号锁定策略或其他安全设备告警，请先与系统负责人确认。创建后需要批准才会执行：有多位管理员时由另一位批准。')" />
+        <el-form-item label="Nuclei">
+          <el-switch v-model="form.nuclei" />
+          <span class="hint inline">{{ t('运行非破坏性模板，探针上需要已安装 nuclei') }}</span>
+        </el-form-item>
+        <el-alert v-if="form.weak_password || form.nuclei" type="warning" :closable="false" show-icon
+          :title="t('会向目标发送真实的探测和登录请求，可能产生登录失败、账号锁定或其他安全设备告警，请先与系统负责人确认。创建后需要批准才会执行：有多位管理员时由另一位批准。')" />
       </el-form>
       <template #footer>
         <el-button @click="runDialog = false">{{ t('取消') }}</el-button>
-        <el-button type="primary" @click="createRun">{{ form.weak_password ? t('提交审批') : t('开始验证') }}</el-button>
+        <el-button type="primary" @click="createRun">{{ form.weak_password || form.nuclei ? t('提交审批') : t('开始验证') }}</el-button>
       </template>
     </el-dialog>
 
@@ -113,7 +144,7 @@
 
 <script setup>
 import { t } from '../i18n'
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { auth } from '../auth'
@@ -126,6 +157,14 @@ const statusMap = {
   failed: { label: t('失败'), type: 'danger' },
   expired: { label: t('已失效'), type: 'info' },
 }
+const coverageMap = {
+  verified: { label: t('已验证'), type: 'success' },
+  failed: { label: t('未通过'), type: 'danger' },
+  not_run: { label: t('待自检'), type: 'warning' },
+  no_scenario: { label: t('无自检场景'), type: 'info' },
+}
+const coverage = ref(null)
+const blind = computed(() => (coverage.value?.tactics || []).filter((x) => x.rules === 0).map((x) => x.tactic))
 const scopes = ref([])
 const runs = ref([])
 const loading = ref(false)
@@ -134,12 +173,12 @@ const runDialog = ref(false)
 const reportOpen = ref(false)
 const report = ref(null)
 const scopeForm = reactive({ cidr: '', note: '' })
-const form = reactive({ name: '', probe_id: '', targets: '', ports: '', weak_password: false })
+const form = reactive({ name: '', probe_id: '', targets: '', ports: '', weak_password: false, nuclei: false })
 
 async function load() {
   loading.value = true
   try {
-    ;[scopes.value, runs.value] = await Promise.all([api.validationScopes(), api.validationRuns()])
+    ;[scopes.value, runs.value, coverage.value] = await Promise.all([api.validationScopes(), api.validationRuns(), api.detectionCoverage()])
   } finally {
     loading.value = false
   }
@@ -159,7 +198,7 @@ async function removeScope(row) {
 }
 
 function openRun() {
-  Object.assign(form, { name: '', probe_id: '', targets: '', ports: '', weak_password: false })
+  Object.assign(form, { name: '', probe_id: '', targets: '', ports: '', weak_password: false, nuclei: false })
   runDialog.value = true
 }
 
@@ -170,6 +209,7 @@ async function createRun() {
     targets: form.targets.split('\n').map((s) => s.trim()).filter(Boolean),
     ports: form.ports.split(',').map((s) => parseInt(s, 10)).filter(Boolean),
     weak_password: form.weak_password,
+    nuclei: form.nuclei,
   })
   ElMessage.success(r.status === 'running' ? t('验证已开始，等待探针领取') : t('已提交，等待批准'))
   runDialog.value = false
@@ -177,7 +217,7 @@ async function createRun() {
 }
 
 async function approve(row) {
-  await ElMessageBox.confirm(t('批准后将对 {p0} 尝试常见口令，会产生真实的登录失败记录。', { p0: row.targets.join(', ') }), t('批准'), { type: 'warning' })
+  await ElMessageBox.confirm(t('批准后将对 {p0} 发送真实的探测请求，可能产生登录失败记录和安全设备告警。', { p0: row.targets.join(', ') }), t('批准'), { type: 'warning' })
   await api.approveValidationRun(row.id)
   ElMessage.success(t('已批准，等待探针领取'))
   load()
