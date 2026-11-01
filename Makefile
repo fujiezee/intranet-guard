@@ -4,7 +4,9 @@ PG_DSN ?= postgres://safe@127.0.0.1:54329/safe_test?sslmode=disable
 CH_URL ?= clickhouse://default:@127.0.0.1:8123
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-AGENT_VERSION_FLAG = -X safe/internal/agent.Version=$(VERSION)
+# 发布公钥写入 Agent，私钥只保存在离线环境（SAFE_SIGN_KEY 指向私钥文件），见 docs/RELEASING.md
+RELEASE_PUBKEY ?= $(shell cat release.pub 2>/dev/null)
+AGENT_VERSION_FLAG = -X safe/internal/agent.Version=$(VERSION) -X safe/internal/agent.ReleaseKeys=$(RELEASE_PUBKEY)
 
 .PHONY: test test-pg test-ch build web release
 
@@ -29,6 +31,7 @@ build: web
 
 # 生成一键安装包：dist/safe-<版本>-linux-<架构>.tar.gz，解压后 sudo ./install.sh
 release: web
+	@[ -n "$(RELEASE_PUBKEY)" ] && [ -n "$$SAFE_SIGN_KEY" ] || { echo "需要 release.pub 和 SAFE_SIGN_KEY（发布私钥文件），见 docs/RELEASING.md"; exit 1; }
 	rm -rf dist && mkdir -p dist/downloads
 	for t in linux/amd64 linux/arm64; do \
 		os=$${t%/*}; arch=$${t#*/}; \
@@ -38,6 +41,7 @@ release: web
 	for arch in amd64 arm64; do \
 		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch go build -trimpath -ldflags='-s -w $(AGENT_VERSION_FLAG)' -o dist/downloads/safe-agent-windows-$$arch.exe ./cmd/agent; \
 	done
+	go run ./cmd/sign sign -key "$$SAFE_SIGN_KEY" -pub '$(RELEASE_PUBKEY)' -version '$(VERSION)' dist/downloads/safe-agent-*
 	@# 管理中心据此判断节点程序的最新版本，用于控制台升级 Agent
 	printf '{"version": "%s"}\n' '$(VERSION)' > dist/downloads/manifest.json
 	for arch in amd64 arm64; do \

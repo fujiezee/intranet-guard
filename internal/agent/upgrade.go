@@ -16,9 +16,14 @@ import (
 	"time"
 
 	"safe/internal/model"
+	signing "safe/internal/release"
+	"safe/internal/version"
 )
 
-// 升级流程：下载新版本（经已有的双向 TLS 通道）→ 校验 SHA-256 → 新版本自检（能启动、能用本机证书通过管理中心认证、
+// ReleaseKeys 是构建时写入的发布公钥（逗号分隔）。没有公钥的构建不接受任何升级。
+var ReleaseKeys = ""
+
+// 升级流程：下载新版本（经已有的双向 TLS 通道）→ 校验 SHA-256 和离线签名（管理中心被攻破也伪造不了）→ 新版本自检（能启动、能用本机证书通过管理中心认证、
 // 版本号正确）→ 原程序改名为 .prev、新程序放到原位置 → 记录 upgrade-pending → 以 RestartExitCode 退出，
 // 由 systemd / Windows 服务 / Kubernetes 重新启动为新版本 → 新版本首次上报成功后删除 .prev 和 upgrade-pending。
 // 新版本启动后反复退出时，systemd 与 Kubernetes 的启动前检查（安装时写入的 upgrade-guard.sh）在第 4 次启动前
@@ -54,6 +59,14 @@ func (a *Agent) runUpgrade(cmd model.AgentCommand) model.CommandResult {
 	}
 	if p["version"] == Version {
 		return model.CommandResult{ID: cmd.ID, Status: "done", Detail: "已是该版本"}
+	}
+	// 旧版本也有有效签名：不允许降级，否则可以把 Agent 退回有已知漏洞的版本
+	if version.Valid(Version) && version.Valid(p["version"]) && !version.Older(Version, p["version"]) {
+		return fail("拒绝降级：当前版本 %s，目标版本 %s", Version, p["version"])
+	}
+	// 下载前先验证，签名不对时不写入也不执行任何内容
+	if err := signing.Verify(ReleaseKeys, p["version"], p["file"], p["sha256"], p["signature"]); err != nil {
+		return fail("发布签名验证失败：%v", err)
 	}
 	if a.cfg.HTTP == nil {
 		return fail("未使用证书接入管理中心，不支持在线升级")

@@ -25,6 +25,7 @@ import (
 type agentRelease struct {
 	Version string            `json:"version"`
 	Files   map[string]string `json:"-"` // 文件名 → SHA-256
+	Sigs    map[string]string `json:"-"` // 文件名 → 离线签名（<文件名>.sig），Agent 验证，管理中心只转发
 }
 
 type releaseCache struct {
@@ -63,7 +64,7 @@ func (s *Server) agentRelease() (agentRelease, error) {
 	if err := json.Unmarshal(data, &rel); err != nil {
 		return agentRelease{}, fmt.Errorf("manifest.json: %w", err)
 	}
-	rel.Files = map[string]string{}
+	rel.Files, rel.Sigs = map[string]string{}, map[string]string{}
 	entries, _ := os.ReadDir(s.cfg.DistDir)
 	for _, e := range entries {
 		if !agentBinary.MatchString(e.Name()) {
@@ -80,6 +81,9 @@ func (s *Server) agentRelease() (agentRelease, error) {
 			return agentRelease{}, err
 		}
 		rel.Files[e.Name()] = hex.EncodeToString(h.Sum(nil))
+		if sig, err := os.ReadFile(filepath.Join(s.cfg.DistDir, e.Name()+".sig")); err == nil {
+			rel.Sigs[e.Name()] = strings.TrimSpace(string(sig))
+		}
 	}
 	c.rel, c.modTime = rel, fi.ModTime()
 	return rel, nil
@@ -144,7 +148,7 @@ func (s *Server) upgradeCommand(r *http.Request, a model.AgentInfo) (*model.Agen
 		return nil, s.store.FailUpgrade(r.Context(), a.ID, attempt, "管理中心没有该平台（"+a.OS+"）的 Agent 程序")
 	}
 	return &model.AgentCommand{ID: attempt, Type: "upgrade",
-		Params: map[string]string{"version": target, "file": file, "sha256": sum}}, nil
+		Params: map[string]string{"version": target, "file": file, "sha256": sum, "signature": rel.Sigs[file]}}, nil
 }
 
 func (s *Server) whoami(w http.ResponseWriter, r *http.Request) {
