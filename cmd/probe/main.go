@@ -9,15 +9,18 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
+	"safe/internal/honeypot"
 	"safe/internal/ids"
 	"safe/internal/model"
 	"safe/internal/node"
@@ -93,6 +96,7 @@ func main() {
 	if *evePath != "" {
 		go runEve(ctx, c, *evePath, *statePath)
 	}
+	go runHoneypot(ctx, c)
 
 	slog.Info("safe-probe started", "id", c.probeID, "server", *serverURL, "eve", *evePath)
 	ticker := time.NewTicker(*interval)
@@ -220,4 +224,63 @@ func saveTailState(path string, st *tail.State) {
 	if err != nil {
 		slog.Error("save state", "err", err)
 	}
+}
+
+// runHoneypot 按管理中心下发的配置运行蜜罐，并定期上报访问事件。上报失败时事件留在内存中重试（最多 10000 条）。
+func runHoneypot(ctx context.Context, c *client) {
+	var mu sync.Mutex
+	var pending []model.HoneypotEvent
+	m := honeypot.New(func(ev model.HoneypotEvent) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(pending) < 10000 {
+			pending = append(pending, ev)
+		}
+		slog.Warn("honeypot accessed", "service", ev.Service, "port", ev.Port, "src", ev.SrcIP, "user", ev.Username)
+	})
+	fetch := func(ctx context.Context, status map[int]string) (model.HoneypotConfig, error) {
+		var resp struct {
+			Honeypot model.HoneypotConfig `json:"honeypot"`
+		}
+		err := c.do(ctx, http.MethodPost, "/api/v1/probe/config?probe_id="+url.QueryEscape(c.probeID),
+			map[string]any{"ips": localIPs(), "status": status}, &resp)
+		return resp.Honeypot, err
+	}
+	go honeypot.Run(ctx, m, fetch, 15*time.Second)
+
+	t := time.NewTicker(3 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		mu.Lock()
+		batch := pending
+		pending = nil
+		mu.Unlock()
+		if len(batch) == 0 {
+			continue
+		}
+		if err := c.do(ctx, http.MethodPost, "/api/v1/probe/honeypot-events",
+			map[string]any{"probe_id": c.probeID, "events": batch}, nil); err != nil {
+			slog.Warn("submit honeypot events, will retry", "events", len(batch), "err", err)
+			mu.Lock()
+			pending = append(batch, pending...)
+			mu.Unlock()
+		}
+	}
+}
+
+// localIPs 返回本机地址，管理中心据此在资产中标识蜜罐、为自检选择目标。
+func localIPs() []string {
+	ips := []string{}
+	addrs, _ := net.InterfaceAddrs()
+	for _, a := range addrs {
+		if ipn, ok := a.(*net.IPNet); ok && !ipn.IP.IsLoopback() {
+			ips = append(ips, ipn.IP.String())
+		}
+	}
+	return ips
 }

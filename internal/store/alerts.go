@@ -2,23 +2,57 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"time"
 
 	"safe/internal/model"
+	"safe/internal/simulate"
 )
 
 func insertAlert(ctx context.Context, tx *Tx, a model.Alert, at time.Time) error {
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO alerts (type, severity, ip, port, message, status, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Type, a.Severity, a.IP, a.Port, a.Message, model.AlertOpen, at, at)
+	return insertAlertRow(ctx, tx, a, "", at)
+}
+
+// insertAlertRow 是所有告警写入的唯一入口。告警内容中带有已登记的自检编号时，
+// 告警直接以"自检"结果关闭（不推送、不计入未处理），并把对应自检标记为通过。
+func insertAlertRow(ctx context.Context, tx *Tx, a model.Alert, dedupKey string, at time.Time) error {
+	status, ackedBy, resolution := model.AlertOpen, "", ""
+	var simID string
+	var simStarted sql.NullTime
+	var simStatus model.SimulationStatus
+	if id := simulate.IDPattern.FindString(a.Message); id != "" {
+		err := tx.QueryRowContext(ctx, `SELECT status, started_at FROM simulations WHERE id = ?`, id).Scan(&simStatus, &simStarted)
+		if err == nil {
+			simID = id
+			status, ackedBy, resolution = model.AlertAcked, "攻击模拟自检", model.ResolutionSimulation
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
+	var alertID int64
+	err := tx.QueryRowContext(ctx, `
+		INSERT INTO alerts (type, severity, ip, port, message, status, acked_by, resolution, dedup_key, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+		a.Type, a.Severity, a.IP, a.Port, a.Message, status, ackedBy, resolution, dedupKey, at, at).Scan(&alertID)
+	if err != nil || simID == "" || simStatus != model.SimRunning {
+		return err
+	}
+	var latency int64
+	if simStarted.Valid {
+		latency = at.Sub(simStarted.Time).Milliseconds()
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE simulations SET status = ?, alert_id = ?, latency_ms = ?, finished_at = ?
+		WHERE id = ? AND status = ?`,
+		model.SimPassed, alertID, latency, at, simID, model.SimRunning)
 	return err
 }
 
 // ListAlerts 返回最近的告警；status 为空时返回全部状态。
 func (s *Store) ListAlerts(ctx context.Context, status model.AlertStatus, limit int) ([]model.Alert, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, type, severity, ip, port, message, status, acked_by, created_at, updated_at
+		SELECT id, type, severity, ip, port, message, status, acked_by, resolution, resolution_note, created_at, updated_at
 		FROM alerts WHERE ? = '' OR status = ?
 		ORDER BY id DESC LIMIT ?`, status, status, limit)
 	if err != nil {
@@ -29,7 +63,7 @@ func (s *Store) ListAlerts(ctx context.Context, status model.AlertStatus, limit 
 	for rows.Next() {
 		var a model.Alert
 		if err := rows.Scan(&a.ID, &a.Type, &a.Severity, &a.IP, &a.Port, &a.Message, &a.Status,
-			&a.AckedBy, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&a.AckedBy, &a.Resolution, &a.ResolutionNote, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		alerts = append(alerts, a)
@@ -37,9 +71,15 @@ func (s *Store) ListAlerts(ctx context.Context, status model.AlertStatus, limit 
 	return alerts, rows.Err()
 }
 
-func (s *Store) AckAlert(ctx context.Context, id int64, by string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE alerts SET status = ?, acked_by = ?, updated_at = ? WHERE id = ?`,
-		model.AlertAcked, by, time.Now().UTC(), id)
+// AckAlert 确认告警；falsePositive 为 true 时记为误报及原因，用于统计误报率和调优规则。
+func (s *Store) AckAlert(ctx context.Context, id int64, by string, falsePositive bool, note string) error {
+	resolution := ""
+	if falsePositive {
+		resolution = model.ResolutionFalsePositive
+	}
+	res, err := s.db.ExecContext(ctx, `
+		UPDATE alerts SET status = ?, acked_by = ?, resolution = ?, resolution_note = ?, updated_at = ? WHERE id = ?`,
+		model.AlertAcked, by, resolution, note, time.Now().UTC(), id)
 	if err != nil {
 		return err
 	}

@@ -9,7 +9,10 @@
     </div>
     <el-table :data="filtered" v-loading="loading" stripe @row-click="(row) => (current = row)" row-class-name="clickable">
       <el-table-column label="IP" width="150" sortable :sort-method="(a, b) => compareIP(a.ip, b.ip)">
-        <template #default="{ row }"><span class="mono">{{ row.ip }}</span></template>
+        <template #default="{ row }">
+          <span class="mono">{{ row.ip }}</span>
+          <el-tag v-if="row.honeypot" size="small" type="warning" style="margin-left: 4px">蜜罐</el-tag>
+        </template>
       </el-table-column>
       <el-table-column prop="hostname" label="主机名" min-width="160" />
       <el-table-column label="开放端口" min-width="300">

@@ -96,7 +96,7 @@ func checkShellVars(t *testing.T, name, script string) {
 }
 
 func TestShellScriptsVarBraces(t *testing.T) {
-	for _, f := range []string{"../../scripts/install.sh", "../../scripts/backup.sh", "../../scripts/test-install.sh"} {
+	for _, f := range []string{"../../scripts/install.sh", "../../scripts/backup.sh", "../../scripts/test-install.sh", "../../scripts/e2e-linux.sh"} {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

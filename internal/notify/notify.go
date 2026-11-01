@@ -176,11 +176,18 @@ func RunOnce(ctx context.Context, st *store.Store, hc *http.Client) error {
 	if err != nil {
 		return err
 	}
+	// 攻击模拟自检产生的告警只用于验证，不推送
+	real := alerts[:0:0]
+	for _, a := range alerts {
+		if a.Resolution != model.ResolutionSimulation {
+			real = append(real, a)
+		}
+	}
 	for _, ch := range channels {
 		if !ch.Enabled {
 			continue
 		}
-		matched := Filter(alerts, ch.MinSeverity)
+		matched := Filter(real, ch.MinSeverity)
 		if len(matched) == 0 {
 			continue
 		}

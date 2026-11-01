@@ -133,11 +133,7 @@ func insertDedupAlert(ctx context.Context, tx *Tx, a alert.DedupAlert, at time.T
 			return err
 		}
 	}
-	_, err := tx.ExecContext(ctx, `
-		INSERT INTO alerts (type, severity, ip, port, message, status, dedup_key, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.Type, a.Severity, a.IP, a.Port, a.Message, model.AlertOpen, a.DedupKey, at, at)
-	return err
+	return insertAlertRow(ctx, tx, a.Alert, a.DedupKey, at)
 }
 
 // MarkOfflineAgents 把超过 cutoff 没有心跳的在线 Agent 标记为离线并告警，返回本次离线的数量。

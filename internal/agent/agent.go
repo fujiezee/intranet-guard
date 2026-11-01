@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -43,10 +44,11 @@ type State struct {
 }
 
 type Agent struct {
-	cfg   Config
-	info  model.AgentInfo
-	state State
-	http  *http.Client
+	cfg     Config
+	info    model.AgentInfo
+	state   State
+	http    *http.Client
+	results []model.CommandResult // 指令执行结果，随下一次上报带回
 }
 
 func New(cfg Config) (*Agent, error) {
@@ -112,9 +114,14 @@ func (a *Agent) cycle(ctx context.Context) {
 	if events == nil {
 		events = []model.HostEvent{}
 	}
-	if err := a.send(ctx, model.AgentReport{Agent: a.info, Events: events}); err != nil {
+	cmds, err := a.send(ctx, model.AgentReport{Agent: a.info, Events: events, Results: a.results})
+	if err != nil {
 		slog.Warn("report failed, will retry", "events", len(events), "err", err)
 		return
+	}
+	a.results = nil
+	for _, c := range cmds {
+		a.results = append(a.results, a.runCommand(c))
 	}
 	a.state = next
 	if err := a.saveState(); err != nil {
@@ -138,14 +145,15 @@ func (a *Agent) collectAuth(ctx context.Context, next *State, now time.Time) ([]
 	return ev, err
 }
 
-func (a *Agent) send(ctx context.Context, rep model.AgentReport) error {
+// send 上报并返回管理中心下发的指令。
+func (a *Agent) send(ctx context.Context, rep model.AgentReport) ([]model.AgentCommand, error) {
 	body, err := json.Marshal(rep)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.cfg.ServerURL+"/api/v1/agent/report", bytes.NewReader(body))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if a.cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+a.cfg.Token)
@@ -153,13 +161,17 @@ func (a *Agent) send(ctx context.Context, rep model.AgentReport) error {
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := a.http.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		return fmt.Errorf("server returned %s", resp.Status)
+		return nil, fmt.Errorf("server returned %s", resp.Status)
 	}
-	return nil
+	var out model.AgentReportResponse
+	if resp.StatusCode == http.StatusOK {
+		_ = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out) // 旧版管理中心返回 204，无指令
+	}
+	return out.Commands, nil
 }
 
 func (a *Agent) loadState() error {

@@ -245,12 +245,20 @@ const (
 func maintenance(ctx context.Context, st *store.Store, taskTimeout time.Duration) {
 	minute := time.NewTicker(time.Minute)
 	hour := time.NewTicker(time.Hour)
+	sims := time.NewTicker(10 * time.Second)
+	defer sims.Stop()
 	defer minute.Stop()
 	defer hour.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-sims.C:
+			if n, err := st.ExpireSimulations(ctx, time.Now()); err != nil {
+				slog.Warn("expire simulations", "err", err)
+			} else if n > 0 {
+				slog.Warn("attack simulations failed: detection did not fire in time", "count", n)
+			}
 		case <-minute.C:
 			if n, err := st.MarkOfflineAgents(ctx, time.Now().Add(-agentOfflineAfter)); err != nil {
 				slog.Warn("mark offline agents", "err", err)

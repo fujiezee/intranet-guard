@@ -32,7 +32,16 @@ func (s *Server) agentReport(w http.ResponseWriter, r *http.Request) {
 	if len(rep.Events) > 0 {
 		slog.Info("agent events saved", "agent", rep.Agent.ID, "events", len(rep.Events))
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if err := s.store.RecordCommandResults(r.Context(), rep.Agent.ID, rep.Results); err != nil {
+		writeInternal(w, err)
+		return
+	}
+	cmds, err := s.store.ClaimSimulations(r.Context(), rep.Agent.ID)
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, model.AgentReportResponse{Commands: cmds})
 }
 
 func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {

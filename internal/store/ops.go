@@ -142,7 +142,7 @@ func (s *Store) AdvanceNotifyCursor(ctx context.Context, from, to int64) (bool, 
 // AlertsAfter 返回 ID 大于 after 的告警，按 ID 升序。
 func (s *Store) AlertsAfter(ctx context.Context, after int64, limit int) ([]model.Alert, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, type, severity, ip, port, message, status, acked_by, created_at, updated_at
+		SELECT id, type, severity, ip, port, message, status, acked_by, resolution, created_at, updated_at
 		FROM alerts WHERE id > ? ORDER BY id LIMIT ?`, after, limit)
 	if err != nil {
 		return nil, err
@@ -152,7 +152,7 @@ func (s *Store) AlertsAfter(ctx context.Context, after int64, limit int) ([]mode
 	for rows.Next() {
 		var a model.Alert
 		if err := rows.Scan(&a.ID, &a.Type, &a.Severity, &a.IP, &a.Port, &a.Message, &a.Status,
-			&a.AckedBy, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&a.AckedBy, &a.Resolution, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, a)

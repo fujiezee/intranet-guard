@@ -17,7 +17,7 @@ func TestAgentDetections(t *testing.T) {
 		if events == nil {
 			events = []model.HostEvent{}
 		}
-		if code := call(t, ts, agentToken, "POST", "/api/v1/agent/report", model.AgentReport{Agent: info, Events: events}, nil); code != http.StatusNoContent {
+		if code := call(t, ts, agentToken, "POST", "/api/v1/agent/report", model.AgentReport{Agent: info, Events: events}, nil); code != http.StatusOK {
 			t.Fatalf("agent report: %d", code)
 		}
 	}

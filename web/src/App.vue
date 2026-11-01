@@ -10,6 +10,8 @@
         <el-menu-item index="/vulns">漏洞</el-menu-item>
         <el-menu-item index="/ids">流量检测</el-menu-item>
         <el-menu-item index="/hosts">主机审计</el-menu-item>
+        <el-menu-item index="/honeypot">蜜罐</el-menu-item>
+        <el-menu-item index="/detection">检测验证</el-menu-item>
         <el-menu-item index="/tasks">扫描任务</el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/nodes">节点管理</el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/users">用户管理</el-menu-item>

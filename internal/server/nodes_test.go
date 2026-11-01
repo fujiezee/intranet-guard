@@ -112,7 +112,7 @@ func TestNodeEnrollmentAndMTLS(t *testing.T) {
 		t.Errorf("key permissions = %v", fi.Mode().Perm())
 	}
 	url := e.nodes.URL + "/api/v1/agent/report"
-	if code := nodeCall(t, web01.HTTP, url, "POST", report("web01")); code != http.StatusNoContent {
+	if code := nodeCall(t, web01.HTTP, url, "POST", report("web01")); code != http.StatusOK {
 		t.Fatalf("report as self: %d", code)
 	}
 	if code := nodeCall(t, web01.HTTP, url, "POST", report("db01")); code != http.StatusForbidden {
@@ -152,7 +152,7 @@ func TestNodeEnrollmentAndMTLS(t *testing.T) {
 	if err := web01.Renew(context.Background()); err != nil {
 		t.Fatalf("renew: %v", err)
 	}
-	if code := nodeCall(t, web01.HTTP, url, "POST", report("web01")); code != http.StatusNoContent {
+	if code := nodeCall(t, web01.HTTP, url, "POST", report("web01")); code != http.StatusOK {
 		t.Errorf("after renew: %d", code)
 	}
 	if code := nodeCall(t, oldClient.HTTP, url, "POST", report("web01")); code != http.StatusUnauthorized {

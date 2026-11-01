@@ -100,3 +100,22 @@ func AgentOffline(hostIP, agentID string, lastSeen time.Time) DedupAlert {
 		},
 	}
 }
+
+// Honeypot 为一次蜜罐访问生成告警。告警关联到访问来源：内网中访问蜜罐的主机很可能已失陷或正在被用于探测。
+func Honeypot(probeID string, ev model.HoneypotEvent) DedupAlert {
+	msg := fmt.Sprintf("%s 访问了蜜罐（探针 %s 的 %s 服务，端口 %d）：%s", ev.SrcIP, probeID, ev.Service, ev.Port, ev.Detail)
+	if ev.Username != "" {
+		msg += "，尝试用户 " + ev.Username
+		if ev.Password != "" {
+			msg += " 密码 " + ev.Password
+		}
+	}
+	key := "honeypot:" + ev.SrcIP + ":" + ev.Service
+	if ev.SimulationID != "" {
+		key += ":" + ev.SimulationID
+	}
+	return DedupAlert{
+		Alert:    model.Alert{Type: model.AlertHoneypot, Severity: model.SeverityHigh, IP: ev.SrcIP, Port: ev.Port, Message: msg},
+		DedupKey: key,
+	}
+}

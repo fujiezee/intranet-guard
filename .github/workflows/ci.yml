@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: 单元测试（SQLite / PostgreSQL / ClickHouse）
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: safe
+          POSTGRES_PASSWORD: safe
+          POSTGRES_DB: safe_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U safe" --health-interval 5s --health-timeout 5s --health-retries 10
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_USER: safe
+          CLICKHOUSE_PASSWORD: safe
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports: ["8123:8123"]
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: go vet
+        run: go vet ./...
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: 测试（SQLite）
+        run: go test -race -count=1 ./...
+      - name: 测试（PostgreSQL）
+        run: go test -count=1 ./...
+        env:
+          SAFE_TEST_PG_DSN: postgres://safe:safe@127.0.0.1:5432/safe_test?sslmode=disable
+      - name: 测试（PostgreSQL + ClickHouse）
+        run: go test -count=1 ./...
+        env:
+          SAFE_TEST_PG_DSN: postgres://safe:safe@127.0.0.1:5432/safe_test?sslmode=disable
+          SAFE_TEST_CH_URL: clickhouse://safe:safe@127.0.0.1:8123
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  web:
+    name: 前端构建
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: npm audit --omit=dev --audit-level=high
+        working-directory: web
+
+  install:
+    name: 一键安装端到端（真实 Ubuntu + systemd）
+    runs-on: ubuntu-latest
+    needs: [test, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: 生成安装包
+        run: make release VERSION=ci
+      - name: 安装模拟测试（替身命令）
+        run: scripts/test-install.sh
+      - name: 真实安装 → 注册 → 扫描 → 蜜罐 → 攻击模拟 → 升级 → 卸载
+        run: sudo scripts/e2e-linux.sh dist/safe-ci-linux-amd64.tar.gz
+      - name: 失败时的服务日志
+        if: failure()
+        run: sudo journalctl -u 'safe-*' -n 200 --no-pager || true

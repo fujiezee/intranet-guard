@@ -1,6 +1,6 @@
 # safe — 内网防护系统
 
-架构、告警规则、权限模型与路线图见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+架构、告警规则与权限模型见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，迭代规划见 [docs/ROADMAP.md](docs/ROADMAP.md)。
 当前完成：阶段 1 资产发现，阶段 2 Web 控制台 / 用户权限 / 资产变化告警，阶段 3 主机 Agent 审计，阶段 4 流量入侵检测（Suricata），阶段 5 漏洞与弱口令检测，阶段 6 节点证书认证（mTLS）/ PostgreSQL / ClickHouse，阶段 7 告警推送与操作审计。
 
 ## 一键安装（试运行 / 生产）

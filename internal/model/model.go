@@ -15,6 +15,7 @@ type Asset struct {
 	Hostname  string    `json:"hostname,omitempty"`
 	Ports     []Port    `json:"ports"`
 	ProbeID   string    `json:"probe_id"`
+	Honeypot  bool      `json:"honeypot,omitempty"` // 该地址运行着蜜罐，端口是伪装的
 	FirstSeen time.Time `json:"first_seen"`
 	LastSeen  time.Time `json:"last_seen"`
 }
@@ -93,16 +94,19 @@ const (
 )
 
 type Alert struct {
-	ID        int64       `json:"id"`
-	Type      AlertType   `json:"type"`
-	Severity  Severity    `json:"severity"`
-	IP        string      `json:"ip"`
-	Port      int         `json:"port,omitempty"`
-	Message   string      `json:"message"`
-	Status    AlertStatus `json:"status"`
-	AckedBy   string      `json:"acked_by,omitempty"`
-	CreatedAt time.Time   `json:"created_at"`
-	UpdatedAt time.Time   `json:"updated_at"`
+	ID       int64       `json:"id"`
+	Type     AlertType   `json:"type"`
+	Severity Severity    `json:"severity"`
+	IP       string      `json:"ip"`
+	Port     int         `json:"port,omitempty"`
+	Message  string      `json:"message"`
+	Status   AlertStatus `json:"status"`
+	AckedBy  string      `json:"acked_by,omitempty"`
+	// Resolution 为处理结果：空、false_positive（误报）或 simulation（自检产生）
+	Resolution     string    `json:"resolution,omitempty"`
+	ResolutionNote string    `json:"resolution_note,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type HostEventType string
@@ -146,8 +150,14 @@ type AgentInfo struct {
 
 // AgentReport 是 Agent 定期上报的心跳 + 事件批次。
 type AgentReport struct {
-	Agent  AgentInfo   `json:"agent"`
-	Events []HostEvent `json:"events"`
+	Agent   AgentInfo       `json:"agent"`
+	Events  []HostEvent     `json:"events"`
+	Results []CommandResult `json:"results,omitempty"`
+}
+
+// AgentReportResponse 是上报的回复，带回待执行的指令。
+type AgentReportResponse struct {
+	Commands []AgentCommand `json:"commands"`
 }
 
 const (
@@ -309,3 +319,79 @@ type AuditEntry struct {
 	ClientIP string    `json:"client_ip"`
 	Success  bool      `json:"success"`
 }
+
+// HoneypotService 是探针上的一个伪装服务。
+type HoneypotService struct {
+	Type string `json:"type"` // ssh / ftp / telnet / mysql / redis / http / tcp
+	Port int    `json:"port"`
+}
+
+// HoneypotConfig 是管理中心下发给探针的蜜罐配置。
+type HoneypotConfig struct {
+	Enabled       bool              `json:"enabled"`
+	Services      []HoneypotService `json:"services"`
+	IgnoreSources []string          `json:"ignore_sources"` // 不告警的来源（CIDR），如内部漏洞扫描器
+}
+
+// HoneypotEvent 是一次对蜜罐的访问。正常业务不会访问蜜罐，因此每一条都值得关注。
+type HoneypotEvent struct {
+	ID           int64     `json:"id,omitempty"`
+	ProbeID      string    `json:"probe_id,omitempty"` // 由管理中心填写
+	Time         time.Time `json:"time"`
+	Service      string    `json:"service"`
+	Port         int       `json:"port"`
+	SrcIP        string    `json:"src_ip"`
+	SrcPort      int       `json:"src_port"`
+	Username     string    `json:"username,omitempty"`
+	Password     string    `json:"password,omitempty"` // 只保留首字符和长度
+	Detail       string    `json:"detail,omitempty"`
+	SimulationID string    `json:"simulation_id,omitempty"` // 攻击模拟自检产生的访问
+}
+
+const AlertHoneypot AlertType = "honeypot"
+
+// AgentCommand 是管理中心随上报回复下发给 Agent 的指令。目前只有攻击模拟自检。
+type AgentCommand struct {
+	ID       string            `json:"id"`
+	Type     string            `json:"type"` // simulate
+	Scenario string            `json:"scenario"`
+	Params   map[string]string `json:"params,omitempty"`
+}
+
+// CommandResult 是 Agent 执行指令后的结果，在下一次上报时带回。
+type CommandResult struct {
+	ID     string `json:"id"`
+	Status string `json:"status"` // done / not_applicable / error
+	Detail string `json:"detail,omitempty"`
+}
+
+type SimulationStatus string
+
+const (
+	SimPending       SimulationStatus = "pending"
+	SimRunning       SimulationStatus = "running"
+	SimPassed        SimulationStatus = "passed"
+	SimFailed        SimulationStatus = "failed" // 超时未检测到
+	SimNotApplicable SimulationStatus = "not_applicable"
+	SimError         SimulationStatus = "error"
+)
+
+type Simulation struct {
+	ID         string           `json:"id"`
+	AgentID    string           `json:"agent_id"`
+	Scenario   string           `json:"scenario"`
+	Status     SimulationStatus `json:"status"`
+	Detail     string           `json:"detail,omitempty"`
+	AlertID    int64            `json:"alert_id,omitempty"`
+	LatencyMs  int64            `json:"latency_ms,omitempty"` // 从 Agent 领取到告警产生
+	CreatedBy  string           `json:"created_by"`
+	CreatedAt  time.Time        `json:"created_at"`
+	StartedAt  *time.Time       `json:"started_at,omitempty"`
+	FinishedAt *time.Time       `json:"finished_at,omitempty"`
+}
+
+// 告警处理结果
+const (
+	ResolutionFalsePositive = "false_positive"
+	ResolutionSimulation    = "simulation" // 攻击模拟自检产生，不推送
+)

@@ -12,6 +12,8 @@ const messages = {
   'cannot delete yourself': '不能删除自己',
   'cannot remove the last admin': '不能删除最后一个管理员',
   'suppression already exists': '该抑制规则已存在',
+  'reason is required when marking a false positive': '标记误报需要填写原因',
+  'no running honeypot: enable a honeypot on a probe first': '没有运行中的蜜罐：请先在“蜜罐”页为探针启用蜜罐',
 }
 
 async function request(method, path, body) {
@@ -45,7 +47,13 @@ export const api = {
   tasks: () => request('GET', '/tasks'),
   createTask: (task) => request('POST', '/tasks', task),
   alerts: (status = '') => request('GET', `/alerts${status ? `?status=${status}` : ''}`),
-  ackAlert: (id) => request('POST', `/alerts/${id}/ack`),
+  ackAlert: (id, body) => request('POST', `/alerts/${id}/ack`, body),
+  rules: () => request('GET', '/rules'),
+  honeypots: () => request('GET', '/honeypots'),
+  setHoneypot: (probe, cfg) => request('PUT', `/honeypots/${encodeURIComponent(probe)}`, cfg),
+  honeypotEvents: () => request('GET', '/honeypot-events'),
+  simulations: () => request('GET', '/simulations'),
+  createSimulations: (agent_id, scenarios) => request('POST', '/simulations', { agent_id, scenarios }),
   vulns: (filter) => request('GET', `/vulns?${new URLSearchParams(filter)}`),
   setVulnStatus: (id, status) => request('POST', `/vulns/${id}/status`, { status }),
   agents: () => request('GET', '/agents'),

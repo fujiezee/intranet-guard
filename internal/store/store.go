@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS alerts (
 	status     TEXT NOT NULL,
 	acked_by   TEXT NOT NULL DEFAULT '',
 	dedup_key  TEXT NOT NULL DEFAULT '',
+	resolution      TEXT NOT NULL DEFAULT '',
+	resolution_note TEXT NOT NULL DEFAULT '',
 	created_at TIMESTAMP NOT NULL,
 	updated_at TIMESTAMP NOT NULL
 );
@@ -190,6 +192,46 @@ CREATE TABLE IF NOT EXISTS audit_log (
 	success   BOOLEAN NOT NULL
 );
 CREATE INDEX IF NOT EXISTS audit_log_ts ON audit_log(ts);
+CREATE TABLE IF NOT EXISTS honeypots (
+	probe_id       TEXT PRIMARY KEY,
+	enabled        BOOLEAN NOT NULL,
+	services       TEXT NOT NULL,
+	ignore_sources TEXT NOT NULL,
+	probe_ips      TEXT NOT NULL DEFAULT '[]', -- 探针上报的本机地址，用于在资产中标识蜜罐
+	status         TEXT NOT NULL DEFAULT '{}', -- 各端口监听状态
+	seen_at        TIMESTAMP,
+	updated_at     TIMESTAMP NOT NULL
+);
+CREATE TABLE IF NOT EXISTS honeypot_events (
+	id            INTEGER PRIMARY KEY AUTOINCREMENT,
+	probe_id      TEXT NOT NULL,
+	ts            TIMESTAMP NOT NULL,
+	service       TEXT NOT NULL,
+	port          INTEGER NOT NULL,
+	src_ip        TEXT NOT NULL,
+	src_port      INTEGER NOT NULL,
+	username      TEXT NOT NULL DEFAULT '',
+	password      TEXT NOT NULL DEFAULT '',
+	detail        TEXT NOT NULL DEFAULT '',
+	simulation_id TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS honeypot_events_ts ON honeypot_events(ts);
+CREATE TABLE IF NOT EXISTS simulations (
+	id          TEXT PRIMARY KEY,
+	agent_id    TEXT NOT NULL,
+	scenario    TEXT NOT NULL,
+	params      TEXT NOT NULL DEFAULT '{}',
+	status      TEXT NOT NULL,
+	detail      TEXT NOT NULL DEFAULT '',
+	alert_id    INTEGER NOT NULL DEFAULT 0,
+	latency_ms  INTEGER NOT NULL DEFAULT 0,
+	timeout_sec INTEGER NOT NULL,
+	created_by  TEXT NOT NULL,
+	created_at  TIMESTAMP NOT NULL,
+	started_at  TIMESTAMP,
+	finished_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS simulations_agent ON simulations(agent_id, status);
 CREATE TABLE IF NOT EXISTS sessions (
 	token_hash TEXT PRIMARY KEY,
 	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -228,6 +270,8 @@ var addedColumns = []struct{ table, column, def string }{
 	{"alerts", "dedup_key", "TEXT NOT NULL DEFAULT ''"},
 	{"tasks", "kind", "TEXT NOT NULL DEFAULT 'discovery'"},
 	{"tasks", "weak_password", "BOOLEAN NOT NULL DEFAULT FALSE"},
+	{"alerts", "resolution", "TEXT NOT NULL DEFAULT ''"},
+	{"alerts", "resolution_note", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func initSchema(db *DB) error {
@@ -399,6 +443,19 @@ func (s *Store) SaveReport(ctx context.Context, r model.ScanReport) error {
 		}
 	}
 
+	// 蜜罐地址上的端口是伪装的，不产生资产变化告警
+	if hp, err := honeypotIPs(ctx, tx); err != nil {
+		return err
+	} else if len(hp) > 0 {
+		kept := alerts[:0]
+		for _, al := range alerts {
+			if !hp[al.IP] {
+				kept = append(kept, al)
+			}
+		}
+		alerts = kept
+	}
+
 	vulnAlerts, err := saveChecks(ctx, tx, append(r.Checks, vuln.CheckBanners(r.Assets)...), seen)
 	if err != nil {
 		return err
@@ -504,5 +561,15 @@ func (s *Store) queryAssets(ctx context.Context, where string, args ...any) ([]m
 			})
 		}
 	}
-	return assets, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	hp, err := honeypotIPs(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
+	for i := range assets {
+		assets[i].Honeypot = hp[assets[i].IP]
+	}
+	return assets, nil
 }

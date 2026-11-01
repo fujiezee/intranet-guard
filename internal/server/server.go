@@ -76,6 +76,13 @@ func New(cfg Config, st *store.Store) *Server {
 	s.mux.Handle("GET /api/v1/vulns", viewer(s.listVulns))
 	s.mux.Handle("POST /api/v1/vulns/{id}/status", admin(s.setVulnStatus))
 
+	s.mux.Handle("GET /api/v1/rules", viewer(s.listRules))
+	s.mux.Handle("GET /api/v1/honeypots", viewer(s.listHoneypots))
+	s.mux.Handle("PUT /api/v1/honeypots/{probe}", admin(s.setHoneypot))
+	s.mux.Handle("GET /api/v1/honeypot-events", viewer(s.listHoneypotEvents))
+	s.mux.Handle("GET /api/v1/simulations", viewer(s.listSimulations))
+	s.mux.Handle("POST /api/v1/simulations", admin(s.createSimulations))
+
 	s.mux.Handle("GET /api/v1/agents", viewer(s.listAgents))
 	s.mux.Handle("GET /api/v1/host-events", viewer(s.listHostEvents))
 
@@ -106,6 +113,8 @@ func New(cfg Config, st *store.Store) *Server {
 		mux.Handle("GET /api/v1/probe/tasks", probe(s.claimTasks))
 		mux.Handle("POST /api/v1/probe/reports", probe(s.submitReport))
 		mux.Handle("POST /api/v1/probe/ids-events", probe(s.submitIDSEvents))
+		mux.Handle("POST /api/v1/probe/config", probe(s.probeConfig))
+		mux.Handle("POST /api/v1/probe/honeypot-events", probe(s.submitHoneypotEvents))
 		mux.Handle("POST /api/v1/agent/report", agent(s.agentReport))
 	}
 	nodeRoutes(s.nodeMux,
@@ -315,7 +324,21 @@ func (s *Server) ackAlert(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid alert id")
 		return
 	}
-	err = s.store.AckAlert(r.Context(), id, userFrom(r.Context()).Username)
+	var req struct {
+		FalsePositive bool   `json:"false_positive"`
+		Reason        string `json:"reason"`
+	}
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+	}
+	if req.FalsePositive && strings.TrimSpace(req.Reason) == "" {
+		writeError(w, http.StatusBadRequest, "reason is required when marking a false positive")
+		return
+	}
+	err = s.store.AckAlert(r.Context(), id, userFrom(r.Context()).Username, req.FalsePositive, strings.TrimSpace(req.Reason))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "alert not found")
 		return
@@ -323,7 +346,11 @@ func (s *Server) ackAlert(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, err)
 		return
 	}
-	s.audit(r, "", "alert.ack", strconv.FormatInt(id, 10), "", true)
+	detail := ""
+	if req.FalsePositive {
+		detail = "false_positive: " + req.Reason
+	}
+	s.audit(r, "", "alert.ack", strconv.FormatInt(id, 10), detail, true)
 	w.WriteHeader(http.StatusNoContent)
 }
 

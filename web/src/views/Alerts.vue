@@ -21,10 +21,19 @@
       <el-table-column label="IP" width="140"><template #default="{ row }"><span class="mono">{{ row.ip }}</span></template></el-table-column>
       <el-table-column prop="message" label="内容" min-width="260" />
       <el-table-column label="时间" width="170"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
-      <el-table-column label="处理" width="150">
+      <el-table-column label="处理" width="170">
         <template #default="{ row }">
-          <span v-if="row.status === 'acked'" class="acked">{{ row.acked_by }} 已确认</span>
-          <el-button v-else-if="auth.isAdmin" size="small" @click="ack(row)">确认</el-button>
+          <template v-if="row.status === 'acked'">
+            <el-tooltip v-if="row.resolution === 'false_positive'" :content="row.resolution_note">
+              <el-tag size="small" type="info">误报</el-tag>
+            </el-tooltip>
+            <el-tag v-else-if="row.resolution === 'simulation'" size="small" type="success">自检</el-tag>
+            <span class="acked">{{ row.acked_by }}</span>
+          </template>
+          <template v-else-if="auth.isAdmin">
+            <el-button size="small" @click="ack(row)">确认</el-button>
+            <el-button size="small" link @click="falsePositive(row)">误报</el-button>
+          </template>
         </template>
       </el-table-column>
     </el-table>
@@ -33,6 +42,7 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { auth } from '../auth'
 import { formatTime } from '../format'
@@ -50,6 +60,7 @@ const typeLabels = {
   agent_offline: 'Agent 离线',
   ids: '入侵检测',
   vuln: '漏洞',
+  honeypot: '蜜罐',
 }
 const alerts = ref([])
 const loading = ref(false)
@@ -66,6 +77,20 @@ async function load() {
 
 async function ack(row) {
   await api.ackAlert(row.id)
+  load()
+}
+
+// 标记误报：原因用于统计误报率、调优或抑制规则
+async function falsePositive(row) {
+  let reason
+  try {
+    ;({ value: reason } = await ElMessageBox.prompt('请说明为什么是误报（例如：授权的漏洞扫描、运维变更）', '标记为误报', {
+      inputValidator: (v) => !!v?.trim() || '请填写原因',
+    }))
+  } catch {
+    return
+  }
+  await api.ackAlert(row.id, { false_positive: true, reason })
   load()
 }
 
