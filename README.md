@@ -3,7 +3,20 @@
 架构、告警规则、权限模型与路线图见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 当前完成：阶段 1 资产发现，阶段 2 Web 控制台 / 用户权限 / 资产变化告警，阶段 3 主机 Agent 审计，阶段 4 流量入侵检测（Suricata），阶段 5 漏洞与弱口令检测，阶段 6 节点证书认证（mTLS）/ PostgreSQL / ClickHouse，阶段 7 告警推送与操作审计。
 
-## 运行
+## 一键安装（试运行 / 生产）
+
+```bash
+make release VERSION=0.1.0                       # 开发机：生成 dist/safe-0.1.0-linux-{amd64,arm64}.tar.gz
+# 拷到管理中心服务器：
+tar -xzf safe-0.1.0-linux-amd64.tar.gz && cd safe-0.1.0-linux-amd64 && sudo ./install.sh
+```
+
+安装完成会打印控制台地址和 admin 密码。探针 / Agent 在控制台"节点管理 → 生成注册令牌"后，
+复制页面给出的一行命令到目标机器执行即可。完整步骤、检查清单和常见问题见 [docs/PILOT.md](docs/PILOT.md)。
+
+安装脚本的模拟测试（无需 root / systemd）：`scripts/test-install.sh`。
+
+## 开发环境运行
 
 ```bash
 # 1. 构建前端（产物在 web/dist，由管理中心直接托管）

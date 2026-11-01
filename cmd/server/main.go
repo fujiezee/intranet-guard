@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -42,6 +43,7 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "console HTTPS certificate file (PEM)")
 	tlsKey := flag.String("tls-key", "", "console HTTPS private key file (PEM)")
 	tlsInternal := flag.Bool("tls-internal", false, "serve the console over HTTPS with a certificate from the internal CA (admins must trust pki/ca.crt)")
+	distDir := flag.String("dist-dir", "", "directory with safe-agent/safe-probe linux binaries served to the one-line node installer")
 	trustedProxies := flag.String("trusted-proxies", "", "comma-separated CIDRs of reverse proxies whose X-Forwarded-For is trusted, e.g. 127.0.0.1/32")
 	taskTimeout := flag.Duration("task-timeout", 6*time.Hour, "mark running scan tasks as failed after this long without a result")
 	flag.Parse()
@@ -101,7 +103,20 @@ func main() {
 	if *nodeHosts != "" {
 		hosts = strings.Split(*nodeHosts, ",")
 	}
-	nodeTLS, err := server.NodeTLSConfig(ca, hosts)
+	serverKey, err := pki.LoadOrCreateServerKey(*pkiDir)
+	if err != nil {
+		slog.Error("load server key", "err", err)
+		os.Exit(1)
+	}
+	if cfg.InstallPin, err = pki.PublicKeyPin(serverKey); err != nil {
+		slog.Error("server key pin", "err", err)
+		os.Exit(1)
+	}
+	if _, port, err := net.SplitHostPort(*nodeAddr); err == nil {
+		cfg.NodePort, _ = strconv.Atoi(port)
+	}
+	cfg.DistDir = *distDir
+	nodeTLS, err := server.NodeTLSConfig(ca, hosts, serverKey)
 	if err != nil {
 		slog.Error("node TLS", "err", err)
 		os.Exit(1)
@@ -142,7 +157,7 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	if *tlsInternal {
-		cert, err := ca.IssueServerCert(hosts)
+		cert, err := ca.IssueServerCert(hosts, serverKey)
 		if err != nil {
 			slog.Error("issue console certificate", "err", err)
 			os.Exit(1)

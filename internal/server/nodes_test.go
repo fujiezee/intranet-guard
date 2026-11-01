@@ -40,7 +40,7 @@ func newNodeEnv(t *testing.T) nodeEnv {
 	t.Cleanup(console.Close)
 
 	nodes := httptest.NewUnstartedServer(srv.NodeHandler())
-	if nodes.TLS, err = NodeTLSConfig(ca, []string{"127.0.0.1"}); err != nil {
+	if nodes.TLS, err = NodeTLSConfig(ca, []string{"127.0.0.1"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	nodes.StartTLS()

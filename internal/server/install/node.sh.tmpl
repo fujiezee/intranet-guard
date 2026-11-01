@@ -1,0 +1,141 @@
+#!/bin/sh
+# safe-{{.Kind}} 一键安装 / 升级 / 卸载脚本，由管理中心生成。
+#
+# 安装： curl ... /install/{{.Kind}}.sh | sudo SAFE_ENROLL_TOKEN='<令牌>'{{if eq .Kind "probe"}} SAFE_PROBE_ID='<网段名>'{{end}} sh
+# 升级： curl ... /install/{{.Kind}}.sh | sudo sh            （已注册的节点不需要令牌）
+# 卸载： curl ... /install/{{.Kind}}.sh | sudo SAFE_ACTION=uninstall sh
+# 离线： 把本脚本和 safe-{{.Kind}}-linux-<架构> 拷到目标机器，sudo SAFE_LOCAL_BIN=./safe-{{.Kind}}-linux-amd64 SAFE_ENROLL_TOKEN=... sh {{.Kind}}.sh
+#        （适用于 curl 太旧、不支持 --pinnedpubkey 的系统，如 CentOS 7；注册本身不依赖 curl）
+set -eu
+
+SERVER='{{.ServerURL}}'
+PIN='{{.Pin}}'
+KIND='{{.Kind}}'
+NAME="safe-$KIND"
+R=${SAFE_TEST_ROOT:-} # 仅用于测试：把系统路径放到临时目录下
+BIN="$R/usr/local/bin/$NAME"
+STATE="$R/var/lib/$NAME"
+ENV_FILE="$R/etc/$NAME.env"
+UNIT="$R/etc/systemd/system/$NAME.service"
+
+say() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31m错误：\033[0m%s\n' "$*" >&2; exit 1; }
+
+[ "$(id -u)" = 0 ] || die "请用 root 运行（在 sh 前加 sudo）"
+command -v systemctl >/dev/null 2>&1 || die "需要 systemd"
+[ -n "${SAFE_LOCAL_BIN:-}" ] || command -v curl >/dev/null 2>&1 || die "需要 curl（或用 SAFE_LOCAL_BIN 离线安装）"
+
+if [ "${SAFE_ACTION:-install}" = uninstall ]; then
+	say "卸载 $NAME"
+	systemctl disable --now "$NAME" 2>/dev/null || true
+	rm -f "$UNIT" "$BIN" "$ENV_FILE"
+	systemctl daemon-reload
+	say "已卸载。证书和状态保留在 ${STATE}（彻底清除：rm -rf ${STATE}，并在控制台吊销该节点）"
+	exit 0
+fi
+
+case "$(uname -m)" in
+x86_64 | amd64) ARCH=amd64 ;;
+aarch64 | arm64) ARCH=arm64 ;;
+*) die "不支持的架构 $(uname -m)" ;;
+esac
+
+# 管理中心使用内部 CA，系统不信任，所以用 -k；--pinnedpubkey 固定管理中心公钥，
+# 只有真正的管理中心才能通过，中间人无法替换下载内容。
+fetch() { curl -fsSLk --pinnedpubkey "$PIN" --retry 2 "$SERVER$1" -o "$2"; }
+
+ENROLLED=0
+[ -f "$STATE/node.crt" ] && ENROLLED=1
+if [ "$ENROLLED" = 0 ]; then
+	[ -n "${SAFE_ENROLL_TOKEN:-}" ] || die "首次安装需要 SAFE_ENROLL_TOKEN（在控制台“节点管理”生成）"
+{{- if eq .Kind "probe"}}
+	[ -n "${SAFE_PROBE_ID:-}" ] || die "首次安装需要 SAFE_PROBE_ID（网段名，例如 office-3f）"
+{{- end}}
+fi
+
+TMP=$(mktemp)
+trap 'rm -f "$TMP"' EXIT
+if [ -n "${SAFE_LOCAL_BIN:-}" ]; then
+	say "使用本地程序 ${SAFE_LOCAL_BIN}"
+	cp "$SAFE_LOCAL_BIN" "$TMP" || die "找不到 ${SAFE_LOCAL_BIN}"
+else
+	say "下载 ${NAME}（linux/${ARCH}）"
+	fetch "/download/$NAME-linux-$ARCH" "$TMP" || die "下载失败：确认能访问 ${SERVER}，且没有被代理或中间设备拦截；curl 低于 7.39 请改用离线安装（见脚本开头说明）"
+fi
+chmod 755 "$TMP"
+systemctl stop "$NAME" 2>/dev/null || true
+install -d "$(dirname "$BIN")" "$(dirname "$UNIT")"
+install -m 755 "$TMP" "$BIN"
+
+install -d -m 700 "$STATE"
+ARGS="-server $SERVER -state $STATE/state.json"
+{{- if eq .Kind "agent"}}
+[ -n "${SAFE_AGENT_ID:-}" ] && ARGS="$ARGS -id $SAFE_AGENT_ID"
+{{- else}}
+[ -n "${SAFE_PROBE_ID:-}" ] && ARGS="$ARGS -id $SAFE_PROBE_ID"
+# 本机装了 Suricata 时自动读取它的告警
+for eve in /var/log/suricata/eve-alert.json /var/log/suricata/eve.json; do
+	if [ -f "$eve" ]; then
+		ARGS="$ARGS -eve $eve"
+		say "检测到 Suricata：$eve"
+		break
+	fi
+done
+{{- end}}
+
+umask 077
+if [ "$ENROLLED" = 0 ]; then
+	printf 'SAFE_ENROLL_TOKEN=%s\n' "$SAFE_ENROLL_TOKEN" >"$ENV_FILE"
+else
+	: >"$ENV_FILE"
+fi
+chmod 600 "$ENV_FILE"
+
+cat >"$UNIT" <<EOF
+[Unit]
+Description=safe $KIND
+After=network-online.target{{if eq .Kind "probe"}} suricata.service{{end}}
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=$ENV_FILE
+ExecStart=$BIN $ARGS
+Restart=always
+RestartSec=5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=$STATE
+{{- if eq .Kind "agent"}}
+ProtectHome=read-only
+{{- else}}
+ProtectHome=yes
+{{- end}}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now "$NAME" >/dev/null 2>&1
+
+if [ "$ENROLLED" = 0 ]; then
+	say "向管理中心注册"
+	i=0
+	while [ ! -f "$STATE/node.crt" ] && [ $i -lt 30 ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+	if [ ! -f "$STATE/node.crt" ]; then
+		journalctl -u "$NAME" -n 20 --no-pager >&2 || true
+		die "注册失败，见上方日志（常见原因：令牌过期或已用完、节点 ID 已被注册、无法访问 ${SERVER}）"
+	fi
+	# 注册成功后令牌不再需要，从配置中删除
+	: >"$ENV_FILE"
+fi
+
+sleep 2
+systemctl is-active --quiet "$NAME" || {
+	journalctl -u "$NAME" -n 20 --no-pager >&2 || true
+	die "$NAME 未能运行，见上方日志"
+}
+say "$NAME 已运行。查看日志：journalctl -u $NAME -f"

@@ -57,6 +57,7 @@ export const api = {
   nodes: () => request('GET', '/nodes'),
   revokeNode: (kind, id) => request('POST', `/nodes/${kind}/${encodeURIComponent(id)}/revoke`),
   enrollTokens: () => request('GET', '/enroll-tokens'),
+  installInfo: () => request('GET', '/install-info'),
   createEnrollToken: (t) => request('POST', '/enroll-tokens', t),
   deleteEnrollToken: (id) => request('DELETE', `/enroll-tokens/${id}`),
   channels: () => request('GET', '/notify-channels'),

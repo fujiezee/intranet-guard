@@ -4,3 +4,4 @@ pki/
 bin/
 data/
 backups/
+dist/

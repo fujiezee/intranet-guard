@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/hex"
@@ -32,8 +33,8 @@ var validNodeID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 // NodeTLSConfig 返回节点接入端口的 TLS 配置：服务端证书由内部 CA 签发，
 // 客户端证书可选（注册接口不需要），提供时必须由内部 CA 签发。
-func NodeTLSConfig(ca *pki.CA, hosts []string) (*tls.Config, error) {
-	cert, err := ca.IssueServerCert(hosts)
+func NodeTLSConfig(ca *pki.CA, hosts []string, key *ecdsa.PrivateKey) (*tls.Config, error) {
+	cert, err := ca.IssueServerCert(hosts, key)
 	if err != nil {
 		return nil, err
 	}

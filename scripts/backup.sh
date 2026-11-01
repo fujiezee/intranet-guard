@@ -4,6 +4,7 @@
 # 用法：scripts/backup.sh [备份目录]            默认 ./backups
 # 环境变量：
 #   SAFE_HOME          管理中心工作目录（含 safe.db、pki/、data/），默认为本仓库根目录；systemd 部署为 /var/lib/safe
+#   SAFE_CONF          配置目录（一键安装为 /etc/safe），设置时一并备份
 #   SAFE_DB            主库：SQLite 文件路径（相对 SAFE_HOME）或 postgres:// 连接串，默认 safe.db
 #   SAFE_EVENTS_DB     设置且 BACKUP_EVENTS=1 时导出 ClickHouse 中的事件（Native 格式）
 #   KEEP               保留最近几份备份，默认 14
@@ -41,6 +42,10 @@ if [ -d "$SAFE_HOME/data" ]; then
 	mkdir -p "$OUT/data/clickhouse"
 	[ -f "$SAFE_HOME/data/safe.env" ] && cp -p "$SAFE_HOME/data/safe.env" "$OUT/data/"
 	[ -f "$SAFE_HOME/data/clickhouse/users.xml" ] && cp -p "$SAFE_HOME/data/clickhouse/users.xml" "$OUT/data/clickhouse/"
+fi
+
+if [ -n "${SAFE_CONF:-}" ] && [ -d "$SAFE_CONF" ]; then
+	cp -Rp "$SAFE_CONF" "$OUT/conf"
 fi
 
 if [ "${BACKUP_EVENTS:-0}" = 1 ] && [ -n "${SAFE_EVENTS_DB:-}" ]; then

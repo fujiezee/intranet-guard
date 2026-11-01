@@ -29,6 +29,12 @@ type Config struct {
 
 	// TrustedProxies 是可信反向代理的地址段：来自这些地址的请求按 X-Forwarded-For 识别真实客户端 IP。
 	TrustedProxies []netip.Prefix
+	// 节点一键安装：InstallPin 是节点接入端口的公钥指纹（curl --pinnedpubkey），NodePort 是该端口，
+	// DistDir 存放可下载的探针 / Agent 程序（safe-agent-linux-amd64 等）。
+	InstallPin string
+	NodePort   int
+	DistDir    string
+
 	// HSTS 为 true 时（控制台经 HTTPS 提供）下发 Strict-Transport-Security，要求浏览器以后只用 HTTPS 访问。
 	HSTS bool
 
@@ -90,6 +96,7 @@ func New(cfg Config, st *store.Store) *Server {
 	s.mux.Handle("DELETE /api/v1/users/{id}", admin(s.deleteUser))
 
 	s.mux.Handle("GET /api/v1/nodes", admin(s.listNodes))
+	s.mux.Handle("GET /api/v1/install-info", admin(s.installInfoHandler))
 	s.mux.Handle("POST /api/v1/nodes/{kind}/{id}/revoke", admin(s.revokeNode))
 	s.mux.Handle("GET /api/v1/enroll-tokens", admin(s.listEnrollTokens))
 	s.mux.Handle("POST /api/v1/enroll-tokens", admin(s.createEnrollToken))
@@ -107,6 +114,8 @@ func New(cfg Config, st *store.Store) *Server {
 	s.nodeMux.HandleFunc("GET /api/v1/ca", s.getCA)
 	s.nodeMux.HandleFunc("POST /api/v1/enroll", s.enroll)
 	s.nodeMux.HandleFunc("POST /api/v1/node/renew", s.renew)
+	s.nodeMux.HandleFunc("GET /install/{script}", s.installScript)
+	s.nodeMux.HandleFunc("GET /download/{file}", s.download)
 	s.nodeMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { writeError(w, http.StatusNotFound, "not found") })
 
 	if cfg.ProbeToken != "" || cfg.AgentToken != "" {

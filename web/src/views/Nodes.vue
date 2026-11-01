@@ -76,9 +76,23 @@
         <el-input :model-value="created.token" readonly class="mono">
           <template #append><el-button @click="copy(created.token)">复制</el-button></template>
         </el-input>
-        <p class="hint-block">在{{ created.kind === 'probe' ? '探针' : '目标服务器' }}上执行（首次启动时注册，之后不再需要令牌）：</p>
-        <pre class="cmd">{{ installCommand }}</pre>
-        <p class="hint-block">令牌中包含管理中心 CA 指纹，节点据此校验连接的是真正的管理中心。</p>
+        <template v-if="created.kind === 'probe'">
+          <p class="hint-block">网段名（探针 ID，用于下发扫描任务）：</p>
+          <el-input v-model="probeID" placeholder="例如 office-3f" style="margin-bottom: 4px" />
+        </template>
+        <p class="hint-block">
+          在{{ created.kind === 'probe' ? '探针机器' : '每台要接入的服务器' }}上以 root 执行（自动下载、注册并作为系统服务运行）：
+        </p>
+        <div class="cmd-wrap">
+          <pre class="cmd">{{ installCommand }}</pre>
+          <el-button size="small" class="cmd-copy" @click="copy(installCommand)">复制命令</el-button>
+        </div>
+        <el-alert v-if="installInfo && !binaryAvailable" type="warning" :closable="false" show-icon style="margin-top: 8px"
+          title="管理中心没有提供节点安装程序（开发环境未使用安装包部署），这条命令会下载失败；请用 make release 生成的安装包部署管理中心。" />
+        <p class="hint-block">
+          命令固定了管理中心的公钥指纹，即使中间人冒充管理中心也无法替换下载内容；
+          令牌中的 CA 指纹则用于注册时再次校验。要求目标服务器的 curl ≥ 7.39（CentOS 7 等过旧系统请改用离线安装）。
+        </p>
       </template>
       <template #footer>
         <template v-if="!created">
@@ -106,12 +120,19 @@ const form = reactive({ kind: 'agent', max_uses: 1, ttl_hours: 24, note: '' })
 const daysLeft = (n) => (new Date(n.cert_expiry) - Date.now()) / 86400000
 const expired = (t) => new Date(t.expires_at) < Date.now() || t.uses >= t.max_uses
 
+const installInfo = ref(null)
+const probeID = ref('')
+const binaryAvailable = computed(() =>
+  installInfo.value?.available.some((f) => f.startsWith(`safe-${created.value?.kind}-`)),
+)
+
 const installCommand = computed(() => {
-  if (!created.value) return ''
-  const server = `https://${location.hostname}:8443`
-  return created.value.kind === 'probe'
-    ? `SAFE_ENROLL_TOKEN='${created.value.token}' \\\n  safe-probe -server ${server} -id <网段名>`
-    : `SAFE_ENROLL_TOKEN='${created.value.token}' \\\n  safe-agent -server ${server}`
+  if (!created.value || !installInfo.value) return ''
+  const { kind, token } = created.value
+  const server = `https://${location.hostname}:${installInfo.value.node_port}`
+  const env = [`SAFE_ENROLL_TOKEN='${token}'`]
+  if (kind === 'probe') env.push(`SAFE_PROBE_ID='${probeID.value.trim() || '<网段名>'}'`)
+  return `curl -fsSLk --pinnedpubkey '${installInfo.value.pin}' ${server}/install/${kind}.sh | sudo ${env.join(' ')} sh`
 })
 
 async function load() {
@@ -127,7 +148,8 @@ function openDialog() {
 }
 
 async function submit() {
-  created.value = await api.createEnrollToken({ ...form })
+  ;[created.value, installInfo.value] = await Promise.all([api.createEnrollToken({ ...form }), api.installInfo()])
+  probeID.value = ''
   load()
 }
 
@@ -165,5 +187,7 @@ onMounted(load)
 .warn { color: #e6a23c; font-weight: 500; }
 .hint { margin-left: 8px; color: #909399; }
 .hint-block { color: #606266; font-size: 13px; margin: 12px 0 6px; }
-.cmd { background: #1f2d3d; color: #e5eaf3; padding: 12px; border-radius: 4px; font-size: 12px; white-space: pre-wrap; word-break: break-all; margin: 0; }
+.cmd-wrap { position: relative; }
+.cmd-copy { position: absolute; top: 6px; right: 6px; }
+.cmd { padding-right: 90px !important; background: #1f2d3d; color: #e5eaf3; padding: 12px; border-radius: 4px; font-size: 12px; white-space: pre-wrap; word-break: break-all; margin: 0; }
 </style>
