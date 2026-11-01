@@ -97,3 +97,30 @@ jobs:
       - name: 失败时的服务日志
         if: failure()
         run: sudo journalctl -u 'safe-*' -n 200 --no-pager || true
+
+  windows:
+    name: Windows Agent 端到端（真实 Windows Server）
+    runs-on: windows-latest
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.10"
+      - name: Agent 单元测试（含事件日志 API、结束进程等真实系统调用）
+        run: go test -count=1 ./internal/agent/... ./cmd/agent/...
+      - name: 构建管理中心与 Windows Agent
+        shell: bash
+        run: |
+          mkdir -p e2e/downloads
+          CGO_ENABLED=0 go build -o e2e/safe-server.exe ./cmd/server
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o e2e/downloads/safe-agent-windows-amd64.exe ./cmd/agent
+      - name: 一行命令安装 → 真实安全事件 → 告警 → 自检 → 处置 → 升级 → 卸载
+        shell: cmd
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\e2e-windows.ps1 -Dir e2e
+      - name: 失败时的日志
+        if: failure()
+        shell: powershell
+        run: |
+          Write-Host '--- server.log'; Get-Content e2e\server.log -Tail 150 -ErrorAction SilentlyContinue
+          Write-Host '--- agent.log'; Get-Content C:\ProgramData\safe-agent\agent.log -Tail 150 -ErrorAction SilentlyContinue

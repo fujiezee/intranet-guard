@@ -44,6 +44,7 @@ type State struct {
 	Files         map[string]FileInfo `json:"files,omitempty"`
 	Processes     map[string]bool     `json:"processes,omitempty"`
 	WebFiles      map[string]FileInfo `json:"web_files,omitempty"`
+	WinBookmarks  map[string]uint64   `json:"win_bookmarks,omitempty"` // Windows 事件日志读取位置（EventRecordID）
 }
 
 type Agent struct {
@@ -57,6 +58,9 @@ type Agent struct {
 	execEvents  []model.HostEvent    // 进程监控产生、尚未上报的事件
 	execDropped int                  // 缓冲区满时丢弃的数量
 	execSeen    map[string]time.Time // 相同规则 + 命令 60 秒内只上报一次
+
+	win          winDetector       // Windows 事件检测
+	winBookmarks map[string]uint64 // 已处理到的事件日志位置，保存状态时写入 State
 }
 
 func New(cfg Config) (*Agent, error) {
@@ -80,17 +84,27 @@ func New(cfg Config) (*Agent, error) {
 
 func (a *Agent) Run(ctx context.Context) {
 	slog.Info("safe-agent started", "id", a.cfg.AgentID, "server", a.cfg.ServerURL, "version", Version)
-	a.info.Capabilities = []string{"auth_log", "fim", "webshell"}
-	if runtime.GOOS == "linux" {
-		a.info.Capabilities = append(a.info.Capabilities, "process_scan")
-	}
 	monCtx, stopMon := context.WithCancel(context.Background())
 	defer stopMon()
-	if err := startProcMonitor(monCtx, a.onExec); err != nil {
-		slog.Warn("command auditing disabled", "err", err)
-	} else {
-		a.info.Capabilities = append(a.info.Capabilities, "exec_monitor")
-		slog.Info("command auditing enabled (proc connector)")
+	switch runtime.GOOS {
+	case "windows":
+		// 命令审计来自安全日志 4688，见到第一条进程创建事件后才加上 exec_monitor（见 collectWinlog）
+		a.info.Capabilities = []string{"winlog", "fim", "webshell"}
+		a.winBookmarks = map[string]uint64{}
+		for k, v := range a.state.WinBookmarks {
+			a.winBookmarks[k] = v
+		}
+	default:
+		a.info.Capabilities = []string{"auth_log", "fim", "webshell"}
+		if runtime.GOOS == "linux" {
+			a.info.Capabilities = append(a.info.Capabilities, "process_scan")
+		}
+		if err := startProcMonitor(monCtx, a.onExec); err != nil {
+			slog.Warn("command auditing disabled", "err", err)
+		} else {
+			a.info.Capabilities = append(a.info.Capabilities, "exec_monitor")
+			slog.Info("command auditing enabled (proc connector)")
+		}
 	}
 
 	t := time.NewTicker(a.cfg.Interval)
@@ -193,11 +207,16 @@ func (a *Agent) cycle(ctx context.Context) {
 	next := a.state
 	var events []model.HostEvent
 
-	ev, err := a.collectAuth(ctx, &next, now)
-	if err != nil {
-		slog.Warn("collect auth log", "err", err)
+	if runtime.GOOS == "windows" {
+		a.putBackExecEvents(a.collectWinlog()) // 与命令审计事件共用缓冲区：上报失败时保留重试
+		a.sweepWinBlocks()
+	} else {
+		ev, err := a.collectAuth(ctx, &next, now)
+		if err != nil {
+			slog.Warn("collect auth log", "err", err)
+		}
+		events = append(events, ev...)
 	}
-	events = append(events, ev...)
 
 	files := ScanFiles(a.cfg.FIMPaths)
 	if a.state.Files != nil { // 首次运行只建立基线
@@ -234,6 +253,12 @@ func (a *Agent) cycle(ctx context.Context) {
 	}
 	a.results = nil
 	a.runCommands(ctx, cmds)
+	if a.winBookmarks != nil {
+		next.WinBookmarks = map[string]uint64{}
+		for k, v := range a.winBookmarks {
+			next.WinBookmarks[k] = v
+		}
+	}
 	a.state = next
 	if err := a.saveState(); err != nil {
 		slog.Error("save state", "err", err)

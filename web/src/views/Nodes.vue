@@ -80,7 +80,15 @@
           <p class="hint-block">网段名（探针 ID，用于下发扫描任务）：</p>
           <el-input v-model="probeID" placeholder="例如 office-3f" style="margin-bottom: 4px" />
         </template>
-        <p class="hint-block">
+        <el-radio-group v-if="created.kind === 'agent'" v-model="platform" size="small" style="margin-top: 8px">
+          <el-radio-button value="linux">Linux</el-radio-button>
+          <el-radio-button value="windows">Windows</el-radio-button>
+        </el-radio-group>
+        <p v-if="windows" class="hint-block">
+          在每台要接入的 Windows 服务器上，以管理员身份打开 <b>Windows PowerShell</b>（5.1，不是 PowerShell 7），粘贴执行
+          （自动下载、开启安全审计、注册并安装为系统服务）：
+        </p>
+        <p v-else class="hint-block">
           在{{ created.kind === 'probe' ? '探针机器' : '每台要接入的服务器' }}上以 root 执行（自动下载、注册并作为系统服务运行）：
         </p>
         <div class="cmd-wrap">
@@ -91,7 +99,9 @@
           title="管理中心没有提供节点安装程序（开发环境未使用安装包部署），这条命令会下载失败；请用 make release 生成的安装包部署管理中心。" />
         <p class="hint-block">
           命令固定了管理中心的公钥指纹，即使中间人冒充管理中心也无法替换下载内容；
-          令牌中的 CA 指纹则用于注册时再次校验。要求目标服务器的 curl ≥ 7.39（CentOS 7 等过旧系统请改用离线安装）。
+          令牌中的 CA 指纹则用于注册时再次校验。
+          <template v-if="windows">支持 Windows Server 2012 R2 及以上；同一令牌可用于多台服务器（不超过令牌的使用次数）。</template>
+          <template v-else>要求目标服务器的 curl ≥ 7.39（CentOS 7 等过旧系统请改用离线安装）。</template>
         </p>
       </template>
       <template #footer>
@@ -122,13 +132,16 @@ const expired = (t) => new Date(t.expires_at) < Date.now() || t.uses >= t.max_us
 
 const installInfo = ref(null)
 const probeID = ref('')
+const platform = ref('linux')
+const windows = computed(() => created.value?.kind === 'agent' && platform.value === 'windows')
 const binaryAvailable = computed(() =>
-  installInfo.value?.available.some((f) => f.startsWith(`safe-${created.value?.kind}-`)),
+  installInfo.value?.available.some((f) => f.startsWith(windows.value ? 'safe-agent-windows-' : `safe-${created.value?.kind}-linux-`)),
 )
 
 const installCommand = computed(() => {
   if (!created.value || !installInfo.value) return ''
   const { kind, token } = created.value
+  if (windows.value) return installInfo.value.windows_command.replace('__TOKEN__', token)
   const server = `https://${location.hostname}:${installInfo.value.node_port}`
   const env = [`SAFE_ENROLL_TOKEN='${token}'`]
   if (kind === 'probe') env.push(`SAFE_PROBE_ID='${probeID.value.trim() || '<网段名>'}'`)

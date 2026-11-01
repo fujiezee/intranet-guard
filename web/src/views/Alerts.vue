@@ -60,7 +60,7 @@ const typeLabels = {
   new_asset: '新主机',
   new_port: '新端口',
   risky_port: '高危端口',
-  ssh_bruteforce: 'SSH 爆破',
+  ssh_bruteforce: '暴力破解',
   bruteforce_success: '爆破成功',
   root_login: 'root 登录',
   file_changed: '文件篡改',
@@ -73,6 +73,8 @@ const typeLabels = {
   webshell: 'Webshell',
   lateral_movement: '横向移动',
   agent_stopped: 'Agent 停止',
+  account_change: '账户变更',
+  domain_attack: '域攻击',
 }
 const alerts = ref([])
 const loading = ref(false)

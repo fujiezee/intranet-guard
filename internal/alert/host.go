@@ -36,7 +36,7 @@ func SSHBruteForce(hostIP, agentID, srcIP string, failures int) DedupAlert {
 	return DedupAlert{
 		Alert: model.Alert{
 			Type: model.AlertSSHBruteForce, Severity: model.SeverityHigh, IP: hostIP,
-			Message: fmt.Sprintf("%s (%s) 遭受 SSH 爆破：来源 %s 在 %d 分钟内失败登录 %d 次",
+			Message: fmt.Sprintf("%s (%s) 遭受暴力破解：来源 %s 在 %d 分钟内登录失败 %d 次",
 				hostIP, agentID, srcIP, int(BruteForceWindow.Minutes()), failures),
 		},
 		DedupKey: "bruteforce:" + agentID + ":" + srcIP,
@@ -177,4 +177,25 @@ func AgentStopped(hostIP, agentID string) DedupAlert {
 func shortHash(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:8])
+}
+
+// AccountChange：新建账户或加入特权组，常见于攻击者建立持久化后门账户。
+func AccountChange(hostIP, agentID string, ev model.HostEvent) DedupAlert {
+	return DedupAlert{
+		Alert: model.Alert{Type: model.AlertAccountChange, Severity: severityOf(ev.Severity), IP: hostIP,
+			Message: fmt.Sprintf("%s (%s) 账户变更：%s", hostIP, agentID, ev.Detail)},
+		DedupKey: "acct:" + agentID + ":" + shortHash(ev.Detail),
+	}
+}
+
+// DomainAttack：域控上的攻击迹象（Kerberoasting、AS-REP Roasting、DCSync、凭据传递）。
+func DomainAttack(hostIP, agentID string, ev model.HostEvent) DedupAlert {
+	msg := fmt.Sprintf("%s (%s) 域攻击迹象：%s", hostIP, agentID, ev.Detail)
+	if ev.SrcIP != "" {
+		msg += "；来源 " + ev.SrcIP
+	}
+	return DedupAlert{
+		Alert:    model.Alert{Type: model.AlertDomainAttack, Severity: severityOf(ev.Severity), IP: hostIP, Message: msg},
+		DedupKey: "domain:" + agentID + ":" + shortHash(ev.Detail),
+	}
 }

@@ -127,6 +127,8 @@ const (
 	EventCommand           HostEventType = "command"            // 交互式会话中执行的命令（审计，不告警）
 	EventSuspiciousCommand HostEventType = "suspicious_command" // 命中命令检测规则
 	EventWebshell          HostEventType = "webshell"           // 网站目录脚本文件新增 / 修改
+	EventAccountChange     HostEventType = "account_change"     // 新建账户、加入特权组（Windows）
+	EventDomainAttack      HostEventType = "domain_attack"      // 域控上的攻击迹象：Kerberoasting、DCSync 等
 )
 
 // HostEvent 是主机 Agent 采集到的一条审计事件。
@@ -187,6 +189,8 @@ const (
 	AlertSuspiciousCommand AlertType = "suspicious_command"
 	AlertWebshell          AlertType = "webshell"
 	AlertLateralMovement   AlertType = "lateral_movement"
+	AlertAccountChange     AlertType = "account_change"
+	AlertDomainAttack      AlertType = "domain_attack"
 )
 
 // IDSEvent 是探针从 Suricata 告警中归一化出的流量检测事件。

@@ -35,6 +35,8 @@ var incidentStages = map[model.AlertType]Stage{
 	model.AlertAgentStopped:      StageEvasion,
 	model.AlertAgentOffline:      StageEvasion,
 	model.AlertLateralMovement:   StageLateral,
+	model.AlertAccountChange:     StagePersistence,
+	model.AlertDomainAttack:      StageCredential,
 }
 
 // attachOnly 的告警只并入已有事件，不单独开启事件：Agent 停止 / 离线多数是运维操作，

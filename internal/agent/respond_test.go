@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -41,13 +42,15 @@ func TestQuarantineAndRestore(t *testing.T) {
 	if _, err := os.Stat(evil); !os.IsNotExist(err) {
 		t.Fatal("file still at original location")
 	}
-	if fi, err := os.Stat(filepath.Join(state, "quarantine", "act-0000aaaa", "file")); err != nil || fi.Mode().Perm() != 0o600 {
+	// Windows 没有 Unix 权限位，访问控制由状态目录的 ACL 保证
+	unixPerm := runtime.GOOS != "windows"
+	if fi, err := os.Stat(filepath.Join(state, "quarantine", "act-0000aaaa", "file")); err != nil || (unixPerm && fi.Mode().Perm() != 0o600) {
 		t.Fatalf("quarantined copy: %v %v", fi, err)
 	}
 	if _, err := a.restoreFile("act-0000aaaa"); err != nil {
 		t.Fatal(err)
 	}
-	if fi, err := os.Stat(evil); err != nil || fi.Mode().Perm() != 0o640 {
+	if fi, err := os.Stat(evil); err != nil || (unixPerm && fi.Mode().Perm() != 0o640) {
 		t.Errorf("restored file: %v %v", fi, err)
 	}
 	if _, err := os.Stat(filepath.Join(state, "quarantine", "act-0000aaaa")); !os.IsNotExist(err) {

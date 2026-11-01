@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"safe/internal/model"
@@ -42,9 +41,10 @@ func (a *Agent) runAction(cmd model.AgentCommand) model.CommandResult {
 	if !cmd.ExpiresAt.IsZero() && time.Now().After(cmd.ExpiresAt) {
 		return fail(errors.New("处置指令已过期，未执行"))
 	}
-	if runtime.GOOS != "linux" {
-		return fail(errors.New("处置动作仅支持 Linux"))
+	if runtime.GOOS != "linux" && runtime.GOOS != "windows" {
+		return fail(errors.New("处置动作仅支持 Linux 和 Windows"))
 	}
+	win := runtime.GOOS == "windows"
 	var detail string
 	var err error
 	p := cmd.Params
@@ -58,9 +58,17 @@ func (a *Agent) runAction(cmd model.AgentCommand) model.CommandResult {
 				}
 			}
 		}
-		detail, err = blockIP(p["ip"], p["duration"])
+		if win {
+			detail, err = a.winBlockIP(p["ip"], p["duration"])
+		} else {
+			detail, err = blockIP(p["ip"], p["duration"])
+		}
 	case model.ActUnblockIP:
-		detail, err = unblockIP(p["ip"])
+		if win {
+			detail, err = a.winUnblockIP(p["ip"])
+		} else {
+			detail, err = unblockIP(p["ip"])
+		}
 	case model.ActKillProcess:
 		detail, err = killProcess(p["pid"], p["exe"])
 	case model.ActQuarantine:
@@ -68,6 +76,10 @@ func (a *Agent) runAction(cmd model.AgentCommand) model.CommandResult {
 	case model.ActRestoreFile:
 		detail, err = a.restoreFile(p["quarantine_id"])
 	case model.ActIsolate:
+		if win {
+			// 隔离需要改整机防火墙默认策略，恢复不当可能让主机无法远程登录，暂不在 Windows 上自动执行
+			return fail(errors.New("Windows 暂不支持隔离主机：请先封禁攻击来源 IP，或在虚拟化平台断开该主机网络"))
+		}
 		detail, err = a.isolate(p["allow"])
 	case model.ActRelease:
 		detail, err = release()
@@ -118,13 +130,9 @@ const blockTable = `table inet safe_block {
 `
 
 func blockIP(ipStr, durStr string) (string, error) {
-	ip, err := parseIP(ipStr)
+	ip, secs, err := parseBlockArgs(ipStr, durStr)
 	if err != nil {
 		return "", err
-	}
-	secs, err := strconv.Atoi(durStr)
-	if err != nil || secs < 60 {
-		return "", fmt.Errorf("invalid duration %q", durStr)
 	}
 	if hasNft() {
 		if runCmd("nft", "", "list", "table", "inet", "safe_block") != nil {
@@ -194,15 +202,19 @@ func killProcess(pidStr, exe string) (string, error) {
 	if exe == "" {
 		return "", errors.New("exe is required to avoid killing a reused pid")
 	}
-	cur, err := os.Readlink("/proc/" + pidStr + "/exe")
+	cur, err := processExe(pid)
 	if err != nil {
 		return "", fmt.Errorf("进程 %d 已不存在", pid)
 	}
-	// PID 可能已被复用：只结束可执行文件一致的进程
-	if strings.TrimSuffix(cur, " (deleted)") != strings.TrimSuffix(exe, " (deleted)") {
+	// PID 可能已被复用：只结束可执行文件一致的进程（Windows 路径不区分大小写）
+	same := strings.TrimSuffix(cur, " (deleted)") == strings.TrimSuffix(exe, " (deleted)")
+	if runtime.GOOS == "windows" {
+		same = strings.EqualFold(cur, exe)
+	}
+	if !same {
 		return "", fmt.Errorf("进程 %d 现在是 %s，不是 %s（PID 已被复用），未执行", pid, cur, exe)
 	}
-	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+	if err := forceKill(pid); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("已结束进程 %d（%s）", pid, cur), nil
@@ -213,6 +225,47 @@ func killProcess(pidStr, exe string) (string, error) {
 // 系统目录中的文件不允许隔离（避免误操作导致主机无法启动）；计划任务目录例外，因为常被用于持久化。
 var protectedPrefixes = []string{"/bin/", "/sbin/", "/usr/", "/lib/", "/lib64/", "/boot/", "/etc/", "/proc/", "/sys/", "/dev/"}
 var allowedInProtected = []string{"/etc/cron.d/", "/etc/cron.daily/", "/etc/cron.hourly/", "/etc/cron.weekly/", "/etc/cron.monthly/", "/etc/profile.d/"}
+
+// winProtectedDirs：Windows 系统与程序目录，按环境变量取实际位置。
+func winProtectedDirs() []string {
+	var out []string
+	for _, env := range []string{"SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"} {
+		if v := os.Getenv(env); v != "" {
+			out = append(out, strings.TrimRight(v, `\`)+`\`)
+		}
+	}
+	if len(out) == 0 {
+		out = []string{`C:\Windows\`, `C:\Program Files\`, `C:\Program Files (x86)\`}
+	}
+	return out
+}
+
+// hasPathPrefix 判断路径前缀；Windows 不区分大小写。
+func hasPathPrefix(path, prefix string) bool {
+	if runtime.GOOS == "windows" {
+		return len(path) >= len(prefix) && strings.EqualFold(path[:len(prefix)], prefix)
+	}
+	return strings.HasPrefix(path, prefix)
+}
+
+func isProtectedPath(path string) bool {
+	prefixes, allowed := protectedPrefixes, allowedInProtected
+	if runtime.GOOS == "windows" {
+		prefixes, allowed = winProtectedDirs(), nil
+	}
+	protected := false
+	for _, p := range prefixes {
+		if hasPathPrefix(path, p) {
+			protected = true
+		}
+	}
+	for _, p := range allowed {
+		if hasPathPrefix(path, p) {
+			protected = false
+		}
+	}
+	return protected
+}
 
 type quarantineMeta struct {
 	Path   string      `json:"path"`
@@ -230,18 +283,7 @@ func (a *Agent) quarantine(id, path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		return "", fmt.Errorf("path must be absolute: %q", path)
 	}
-	protected := false
-	for _, p := range protectedPrefixes {
-		if strings.HasPrefix(path, p) {
-			protected = true
-		}
-	}
-	for _, p := range allowedInProtected {
-		if strings.HasPrefix(path, p) {
-			protected = false
-		}
-	}
-	if protected || strings.HasPrefix(path, filepath.Dir(a.cfg.StatePath)) {
+	if isProtectedPath(path) || hasPathPrefix(path, filepath.Dir(a.cfg.StatePath)+string(filepath.Separator)) {
 		return "", fmt.Errorf("系统目录中的文件不允许隔离：%s", path)
 	}
 	fi, err := os.Lstat(path)

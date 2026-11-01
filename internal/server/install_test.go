@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -8,8 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+
+	"safe/internal/pki"
 )
 
 const testPin = "sha256//AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
@@ -38,6 +43,15 @@ func TestInstallEndpoints(t *testing.T) {
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(b)
+	}
+
+	// Windows 脚本：管理中心地址写入单引号字符串
+	if code, script := get("/install/agent.ps1", "10.1.2.3:8443"); code != http.StatusOK ||
+		!strings.Contains(script, "$Server = 'https://10.1.2.3:8443'") || strings.Contains(script, "{{") {
+		t.Errorf("windows script: %d", code)
+	}
+	if code, _ := get("/install/agent.ps1", "evil';calc;'"); code != http.StatusBadRequest {
+		t.Errorf("malicious host for windows script: %d", code)
 	}
 
 	for _, kind := range []string{"agent", "probe"} {
@@ -76,9 +90,21 @@ func TestInstallEndpoints(t *testing.T) {
 	}
 
 	var info installInfo
+	os.WriteFile(filepath.Join(dist, "safe-agent-windows-amd64.exe"), []byte("MZ"), 0o755)
 	if code := call(t, console, adminToken, "GET", "/api/v1/install-info", nil, &info); code != http.StatusOK ||
-		info.Pin != testPin || info.NodePort != 8443 || len(info.Available) != 1 {
+		info.Pin != testPin || info.NodePort != 8443 || len(info.Available) != 2 {
 		t.Errorf("install-info: %d %+v", code, info)
+	}
+	// Windows 命令：主机名取自访问控制台的地址，端口为节点端口；指纹去掉 sha256// 前缀
+	host := strings.TrimPrefix(console.URL, "http://")
+	host = host[:strings.LastIndex(host, ":")]
+	if !strings.Contains(info.WindowsCommand, "DownloadString('https://"+host+":8443/install/agent.ps1')") ||
+		!strings.Contains(info.WindowsCommand, "-eq '"+strings.TrimPrefix(testPin, "sha256//")+"'") ||
+		!strings.Contains(info.WindowsCommand, "SAFE_ENROLL_TOKEN='__TOKEN__'") {
+		t.Errorf("windows command: %s", info.WindowsCommand)
+	}
+	if code, body := get("/download/safe-agent-windows-amd64.exe", ""); code != http.StatusOK || body != "MZ" {
+		t.Errorf("windows download: %d %q", code, body)
 	}
 }
 
@@ -105,5 +131,32 @@ func TestShellScriptsVarBraces(t *testing.T) {
 		if out, err := exec.Command("sh", "-n", f).CombinedOutput(); err != nil {
 			t.Errorf("%s syntax: %v\n%s", f, err, out)
 		}
+	}
+}
+
+// PowerShell 5.1 只能取得证书中的原始公钥（65 字节的未压缩点），命令里拼上固定前缀再计算 SHA-256；
+// 这里确认结果与 curl --pinnedpubkey 使用的 SubjectPublicKeyInfo 指纹完全一致。
+func TestWindowsPinMatchesSPKI(t *testing.T) {
+	key, err := pki.LoadOrCreateServerKey(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin, _ := pki.PublicKeyPin(key)
+	ecdhKey, err := key.PublicKey.ECDH()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var spki []byte
+	for _, b := range strings.Split(p256SPKIPrefix, ",") {
+		v, err := strconv.ParseUint(strings.TrimPrefix(b, "0x"), 16, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		spki = append(spki, byte(v))
+	}
+	spki = append(spki, ecdhKey.Bytes()...)
+	sum := sha256.Sum256(spki)
+	if got := "sha256//" + base64.StdEncoding.EncodeToString(sum[:]); got != pin {
+		t.Fatalf("powershell pin %s != spki pin %s", got, pin)
 	}
 }

@@ -1,0 +1,118 @@
+# safe 主机安全 Agent（Windows）一键安装脚本，由管理中心生成。
+# 以管理员身份打开 Windows PowerShell 5.1，执行控制台“节点管理”给出的命令：
+#   安装：命令中带注册令牌 SAFE_ENROLL_TOKEN
+#   升级：再次执行同一命令（已注册的机器不需要令牌）
+#   卸载：$env:SAFE_ACTION='uninstall' 后执行；同时设置 $env:SAFE_PURGE='1' 会删除证书和状态
+# 安装时会开启以下 Windows 安全审计（Agent 依赖这些事件）：登录、进程创建（含命令行）、账户与安全组管理、
+# Kerberos 身份验证与服务票据、目录服务访问（域控）。域组策略中的“高级审核策略”会覆盖本地设置，请在组策略中保持开启。
+& {
+$ErrorActionPreference = 'Stop'
+$Server = '{{.ServerURL}}'
+$Name = 'safe-agent'
+$Arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
+$InstallDir = Join-Path $env:ProgramFiles 'safe-agent'
+$Exe = Join-Path $InstallDir 'safe-agent.exe'
+$StateDir = Join-Path $env:ProgramData 'safe-agent'
+$State = Join-Path $StateDir 'state.json'
+$Log = Join-Path $StateDir 'agent.log'
+
+function Say([string]$m) { Write-Host "==> $m" -ForegroundColor Cyan }
+function Die([string]$m) { Write-Host "错误：$m" -ForegroundColor Red; throw $m }
+
+function Stop-Agent {
+	$svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+	if ($svc -and $svc.Status -ne 'Stopped') {
+		Stop-Service -Name $Name -Force
+		$svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
+	}
+}
+
+try {
+	$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+	if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { Die '请以管理员身份运行 PowerShell' }
+
+	if ($env:SAFE_ACTION -eq 'uninstall') {
+		Say '卸载 safe-agent'
+		Stop-Agent
+		if (Get-Service -Name $Name -ErrorAction SilentlyContinue) { sc.exe delete $Name | Out-Null }
+		# 删除 Agent 创建的封禁规则
+		Get-NetFirewallRule -DisplayName 'safe-block *' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+		Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
+		if ($env:SAFE_PURGE -eq '1') {
+			Remove-Item -Recurse -Force $StateDir -ErrorAction SilentlyContinue
+			Say '已删除证书与状态'
+		} else {
+			Say "已保留证书与状态 $StateDir（重新安装不需要令牌）"
+		}
+		Say '已卸载（安全审计设置保持不变）'
+		return
+	}
+
+	$enrolled = Test-Path (Join-Path $StateDir 'node.crt')
+	if (-not $enrolled -and -not $env:SAFE_ENROLL_TOKEN) { Die '首次安装需要注册令牌：请在控制台“节点管理”生成令牌后复制完整命令执行' }
+
+	Say "下载 safe-agent（windows/$Arch）"
+	$tmp = Join-Path $env:TEMP ('safe-agent-' + [guid]::NewGuid().ToString('N') + '.exe')
+	try {
+		(New-Object Net.WebClient).DownloadFile("$Server/download/safe-agent-windows-$Arch.exe", $tmp)
+	} catch {
+		Die "下载失败：$($_.Exception.Message)。请确认能访问 $Server"
+	}
+
+	Say '开启 Windows 安全审计'
+	# 按子类别 GUID 设置，与系统语言无关
+	$audit = @(
+		@('{0CCE9215-69AE-11D9-BED3-505054503030}', $true),  # 登录
+		@('{0CCE922B-69AE-11D9-BED3-505054503030}', $false), # 进程创建
+		@('{0CCE9235-69AE-11D9-BED3-505054503030}', $false), # 用户账户管理
+		@('{0CCE9237-69AE-11D9-BED3-505054503030}', $false), # 安全组管理
+		@('{0CCE9242-69AE-11D9-BED3-505054503030}', $true),  # Kerberos 身份验证服务（域控）
+		@('{0CCE9240-69AE-11D9-BED3-505054503030}', $true),  # Kerberos 服务票证操作（域控）
+		@('{0CCE923B-69AE-11D9-BED3-505054503030}', $false)  # 目录服务访问（域控）
+	)
+	foreach ($a in $audit) {
+		if ($a[1]) { auditpol.exe /set "/subcategory:$($a[0])" /success:enable /failure:enable | Out-Null }
+		else { auditpol.exe /set "/subcategory:$($a[0])" /success:enable | Out-Null }
+		if ($LASTEXITCODE -ne 0) { Write-Host "    警告：设置审计子类别 $($a[0]) 失败" -ForegroundColor Yellow }
+	}
+	$auditKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Policies\System\Audit'
+	New-Item -Path $auditKey -Force | Out-Null
+	Set-ItemProperty -Path $auditKey -Name 'ProcessCreationIncludeCmdLine_Enabled' -Value 1 -Type DWord
+	# 安全日志太小时事件会在 Agent 读取前被覆盖（繁忙的域控尤其明显）
+	$sec = Get-WinEvent -ListLog Security
+	if ($sec.MaximumSizeInBytes -lt 256MB) { wevtutil.exe sl Security /ms:268435456 | Out-Null }
+
+	Stop-Agent
+	New-Item -ItemType Directory -Force -Path $InstallDir, $StateDir | Out-Null
+	Move-Item -Force $tmp $Exe
+	# 状态目录保存节点私钥：只允许 SYSTEM 和 Administrators 访问
+	icacls.exe $StateDir /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+
+	if (-not $enrolled) {
+		Say "注册到管理中心 $Server"
+		& $Exe -enroll-only -server $Server -state $State
+		if ($LASTEXITCODE -ne 0) { Die '注册失败：令牌无效、已用完或已过期，或无法连接管理中心' }
+	}
+
+	$bin = "`"$Exe`" -server $Server -state `"$State`" -log-file `"$Log`""
+	if ($env:SAFE_AGENT_EXTRA) { $bin += ' ' + $env:SAFE_AGENT_EXTRA }
+	if (Get-Service -Name $Name -ErrorAction SilentlyContinue) {
+		Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$Name" -Name ImagePath -Value $bin
+	} else {
+		New-Service -Name $Name -BinaryPathName $bin -DisplayName 'safe 主机安全 Agent' -StartupType Automatic | Out-Null
+	}
+	sc.exe description $Name 'safe 内网安全系统：采集主机安全事件并上报管理中心' | Out-Null
+	sc.exe failure $Name reset= 86400 actions= restart/5000/restart/5000/restart/60000 | Out-Null
+
+	Start-Service -Name $Name
+	Start-Sleep -Seconds 3
+	if ((Get-Service -Name $Name).Status -ne 'Running') { Die "服务未能保持运行，请查看日志 $Log" }
+	Say "safe-agent 已运行（服务 $Name）"
+	Write-Host "    查看状态：Get-Service $Name"
+	Write-Host "    查看日志：Get-Content -Tail 50 '$Log'"
+} finally {
+	Remove-Item Env:SAFE_ENROLL_TOKEN -ErrorAction SilentlyContinue
+	Remove-Item Env:SAFE_ACTION -ErrorAction SilentlyContinue
+	[Net.ServicePointManager]::ServerCertificateValidationCallback = $null
+}
+}

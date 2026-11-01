@@ -131,6 +131,10 @@ func (s *Store) detectHostAlerts(ctx context.Context, hostIP, agentID string, ev
 			alerts = append(alerts, alert.SuspiciousCommand(hostIP, agentID, ev))
 		case model.EventWebshell:
 			alerts = append(alerts, alert.Webshell(hostIP, agentID, ev))
+		case model.EventAccountChange:
+			alerts = append(alerts, alert.AccountChange(hostIP, agentID, ev))
+		case model.EventDomainAttack:
+			alerts = append(alerts, alert.DomainAttack(hostIP, agentID, ev))
 		}
 	}
 	for src, last := range latestFailure {

@@ -35,6 +35,9 @@ release: web
 		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags='-s -w' -o dist/downloads/safe-probe-$$os-$$arch ./cmd/probe; \
 	done
 	for arch in amd64 arm64; do \
+		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch go build -trimpath -ldflags='-s -w' -o dist/downloads/safe-agent-windows-$$arch.exe ./cmd/agent; \
+	done
+	for arch in amd64 arm64; do \
 		d=dist/safe-$(VERSION)-linux-$$arch; mkdir -p $$d; \
 		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags='-s -w' -o $$d/safe-server ./cmd/server; \
 		cp -R web/dist $$d/web; cp -R dist/downloads $$d/downloads; \

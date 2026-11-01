@@ -217,3 +217,38 @@ func TestV03Detections(t *testing.T) {
 		}
 	}
 }
+
+func TestWindowsEventAlerts(t *testing.T) {
+	ts, adminToken := newTestServer(t)
+	now := time.Now()
+	rep := model.AgentReport{Agent: model.AgentInfo{ID: "DC01", Hostname: "DC01", OS: "windows/amd64", IPs: []string{"10.0.0.10"}},
+		Events: []model.HostEvent{
+			{Type: model.EventDomainAttack, Time: now, Severity: "high", SrcIP: "10.0.0.66",
+				Detail: "[Kerberoasting] 账户 alice@CORP 在 10 分钟内以 RC4 加密请求了 3 个服务的票据：a、b、c"},
+			{Type: model.EventAccountChange, Time: now, Severity: "high", Detail: `S-1-5-21-1-2-3-1001 被加入特权组 Domain Admins（操作者 CORP\helpdesk）`},
+			{Type: model.EventAccountChange, Time: now, Severity: "medium", Detail: `新建账户 CORP\svc_x（操作者 CORP\helpdesk）`},
+		}}
+	if code := call(t, ts, agentToken, "POST", "/api/v1/agent/report", rep, nil); code != http.StatusOK {
+		t.Fatalf("report: %d", code)
+	}
+	var alerts []model.Alert
+	call(t, ts, adminToken, "GET", "/api/v1/alerts", nil, &alerts)
+	got := map[model.AlertType][]model.Severity{}
+	for _, a := range alerts {
+		got[a.Type] = append(got[a.Type], a.Severity)
+	}
+	if len(got[model.AlertDomainAttack]) != 1 || got[model.AlertDomainAttack][0] != model.SeverityHigh || len(got[model.AlertAccountChange]) != 2 {
+		t.Errorf("alerts: %v", got)
+	}
+	for _, a := range alerts {
+		if a.Type == model.AlertDomainAttack && !strings.Contains(a.Message, "来源 10.0.0.66") {
+			t.Errorf("domain attack message: %s", a.Message)
+		}
+	}
+	// 凭据获取 + 持久化两个阶段归入同一个事件
+	var incidents []model.Incident
+	call(t, ts, adminToken, "GET", "/api/v1/incidents", nil, &incidents)
+	if len(incidents) != 1 || strings.Join(incidents[0].Stages, ",") != "credential,persistence" {
+		t.Errorf("incidents: %+v", incidents)
+	}
+}

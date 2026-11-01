@@ -22,8 +22,8 @@
         <el-table-column label="采集能力" min-width="220">
           <template #default="{ row }">
             <el-tag v-for="c in row.capabilities || []" :key="c" size="small" type="info" class="cap">{{ capLabels[c] || c }}</el-tag>
-            <el-tooltip v-if="row.os?.startsWith('linux') && !(row.capabilities || []).includes('exec_monitor')"
-              content="命令审计未启用：Agent 需要在 Linux 上以 root 运行">
+            <el-tooltip v-if="(row.os?.startsWith('linux') || row.os?.startsWith('windows')) && !(row.capabilities || []).includes('exec_monitor')"
+              :content="row.os?.startsWith('windows') ? '尚未收到进程创建事件（4688）：确认已开启“审核进程创建”，域组策略未将其关闭' : '命令审计未启用：Agent 需要在 Linux 上以 root 运行'">
               <el-tag size="small" type="warning" class="cap">无命令审计</el-tag>
             </el-tooltip>
           </template>
@@ -77,6 +77,8 @@ const eventLabels = {
   file_changed: '文件变更',
   webshell: 'Webshell',
   suspicious_process: '可疑进程',
+  account_change: '账户变更',
+  domain_attack: '域攻击',
 }
 const eventTagType = {
   login_success: 'success',
@@ -87,13 +89,16 @@ const eventTagType = {
   file_changed: 'danger',
   webshell: 'danger',
   suspicious_process: 'danger',
+  account_change: 'warning',
+  domain_attack: 'danger',
 }
 const statusMap = {
   online: { label: '在线', type: 'success' },
   offline: { label: '离线', type: 'danger' },
   stopped: { label: '已停止', type: 'warning' },
 }
-const capLabels = { auth_log: '登录审计', fim: '文件完整性', webshell: 'Webshell', process_scan: '进程扫描', exec_monitor: '命令审计' }
+const capLabels = { auth_log: '登录审计', fim: '文件完整性', webshell: 'Webshell', process_scan: '进程扫描', exec_monitor: '命令审计',
+  winlog: 'Windows 事件日志' }
 
 const agents = ref([])
 const events = ref([])

@@ -38,7 +38,7 @@ var Scenarios = []Scenario{
 		model.AlertHoneypot, 90 * time.Second},
 	{ReverseShell, "反弹 shell", "启动一个 shell，其输入输出连接到 Agent 在本机建立的 TCP 连接（不连接外部、不执行任何命令），2 分钟后结束",
 		model.AlertSuspiciousCommand, 150 * time.Second},
-	{DownloadExec, "下载并执行", "执行一条包含 \"curl … | sh\" 字样的命令，实际为空操作（不下载、不执行），2 分钟后结束",
+	{DownloadExec, "下载并执行", "执行一条包含 \"curl … | sh\"（Windows 上为 PowerShell IEX 下载）字样的命令，实际为空操作（不下载、不执行）",
 		model.AlertSuspiciousCommand, 150 * time.Second},
 	{WebshellDrop, "Webshell 落地", "在网站目录写入一个只含注释的 PHP 文件（无任何代码），2 分钟后删除",
 		model.AlertWebshell, 150 * time.Second},
