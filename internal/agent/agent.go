@@ -233,9 +233,7 @@ func (a *Agent) cycle(ctx context.Context) {
 		return
 	}
 	a.results = nil
-	for _, c := range cmds {
-		a.results = append(a.results, a.runCommand(c))
-	}
+	a.runCommands(ctx, cmds)
 	a.state = next
 	if err := a.saveState(); err != nil {
 		slog.Error("save state", "err", err)
@@ -325,4 +323,23 @@ func localIPs() []string {
 		}
 	}
 	return ips
+}
+
+// runCommands 执行指令后立即回报结果（不等下一个采集周期），处置和自检的结果能尽快出现在控制台。
+// 回报的回复里可能还有新指令，最多连续处理几轮。
+func (a *Agent) runCommands(ctx context.Context, cmds []model.AgentCommand) {
+	for round := 0; round < 3 && len(cmds) > 0; round++ {
+		for _, c := range cmds {
+			a.results = append(a.results, a.runCommand(c))
+		}
+		next, err := a.send(ctx, model.AgentReport{Agent: a.info, Events: []model.HostEvent{}, Results: a.results})
+		if err != nil {
+			return // 结果留到下一个周期随常规上报带回
+		}
+		a.results = nil
+		cmds = next
+	}
+	for _, c := range cmds {
+		a.results = append(a.results, a.runCommand(c))
+	}
 }
