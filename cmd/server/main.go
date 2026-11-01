@@ -4,12 +4,14 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"flag"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -27,7 +29,8 @@ import (
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
-	dbPath := flag.String("db", "safe.db", "SQLite file path, or postgres://user:pass@host:5432/dbname for PostgreSQL")
+	dbPath := flag.String("db", envOr("SAFE_DB", "safe.db"),
+		"SQLite file path, or postgres://user:pass@host:5432/dbname for PostgreSQL (default: $SAFE_DB, else safe.db)")
 	migrateFrom := flag.String("migrate-from", "", "copy all data from this SQLite file into -db, then exit")
 	eventsDB := flag.String("events-db", os.Getenv("SAFE_EVENTS_DB"),
 		"store host / IDS events in ClickHouse: clickhouse://user:pass@host:8123/dbname (default: $SAFE_EVENTS_DB, else main database)")
@@ -36,6 +39,10 @@ func main() {
 	nodeAddr := flag.String("node-addr", ":8443", "mTLS listen address for probes and agents")
 	nodeHosts := flag.String("node-hosts", "", "comma-separated DNS names / IPs nodes use to reach this server (default: hostname and local IPs)")
 	pkiDir := flag.String("pki-dir", "pki", "directory holding the internal CA")
+	tlsCert := flag.String("tls-cert", "", "console HTTPS certificate file (PEM)")
+	tlsKey := flag.String("tls-key", "", "console HTTPS private key file (PEM)")
+	tlsInternal := flag.Bool("tls-internal", false, "serve the console over HTTPS with a certificate from the internal CA (admins must trust pki/ca.crt)")
+	trustedProxies := flag.String("trusted-proxies", "", "comma-separated CIDRs of reverse proxies whose X-Forwarded-For is trusted, e.g. 127.0.0.1/32")
 	taskTimeout := flag.Duration("task-timeout", 6*time.Hour, "mark running scan tasks as failed after this long without a result")
 	flag.Parse()
 
@@ -69,6 +76,27 @@ func main() {
 		slog.Info("created internal CA; back up the pki directory", "dir", *pkiDir)
 	}
 	cfg.CA = ca
+	for _, p := range strings.Split(*trustedProxies, ",") {
+		if p = strings.TrimSpace(p); p == "" {
+			continue
+		}
+		prefix, err := netip.ParsePrefix(p)
+		if err != nil {
+			slog.Error("invalid -trusted-proxies entry", "value", p, "err", err)
+			os.Exit(1)
+		}
+		cfg.TrustedProxies = append(cfg.TrustedProxies, prefix.Masked())
+	}
+	if (*tlsCert == "") != (*tlsKey == "") {
+		slog.Error("-tls-cert and -tls-key must be given together")
+		os.Exit(1)
+	}
+	consoleTLS := *tlsCert != "" || *tlsInternal
+	cfg.HSTS = consoleTLS
+	if !consoleTLS && len(cfg.TrustedProxies) == 0 {
+		slog.Warn("console is served over plain HTTP: passwords and session tokens travel unencrypted; " +
+			"use -tls-cert/-tls-key, -tls-internal, or an HTTPS reverse proxy with -trusted-proxies")
+	}
 	hosts := defaultNodeHosts()
 	if *nodeHosts != "" {
 		hosts = strings.Split(*nodeHosts, ",")
@@ -113,6 +141,16 @@ func main() {
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	if *tlsInternal {
+		cert, err := ca.IssueServerCert(hosts)
+		if err != nil {
+			slog.Error("issue console certificate", "err", err)
+			os.Exit(1)
+		}
+		srv.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+	} else if *tlsCert != "" {
+		srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
 	nodeSrv := &http.Server{
 		Addr:              *nodeAddr,
 		Handler:           handler.NodeHandler(),
@@ -140,8 +178,14 @@ func main() {
 		}
 	}()
 
-	slog.Info("safe-server listening", "addr", *addr, "db", redactDSN(*dbPath))
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	slog.Info("safe-server listening", "addr", *addr, "https", consoleTLS, "db", redactDSN(*dbPath))
+	var serveErr error
+	if consoleTLS {
+		serveErr = srv.ListenAndServeTLS(*tlsCert, *tlsKey) // -tls-internal 时证书已在 TLSConfig 中，参数为空
+	} else {
+		serveErr = srv.ListenAndServe()
+	}
+	if err := serveErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		slog.Error("server", "err", err)
 		os.Exit(1)
 	}
@@ -302,4 +346,11 @@ func runImportEvents(dbPath, eventsDSN string) int {
 	}
 	slog.Info("events imported; the copies in the main database are left untouched", "host_events", hosts, "ids_events", ids)
 	return 0
+}
+
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

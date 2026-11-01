@@ -1,0 +1,44 @@
+# 管理中心 systemd 单元。安装：
+#   useradd --system --home /var/lib/safe --shell /usr/sbin/nologin safe
+#   install -m 755 safe-server /usr/local/bin/ && mkdir -p /usr/local/share/safe && cp -r web/dist /usr/local/share/safe/web
+#   install -d -m 700 -o safe /etc/safe && install -m 600 -o safe /dev/null /etc/safe/safe.env
+#   在 /etc/safe/safe.env 中写入（每行 KEY=VALUE，不要 export）：
+#     SAFE_INIT_ADMIN_PASSWORD=...        首次启动创建 admin 后可删除
+#     SAFE_DB=postgres://safe:...@db:5432/safe?sslmode=require
+#     SAFE_EVENTS_DB=clickhouse://safe:...@ch:8123/safe        可选
+#   cp safe-server.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable --now safe-server
+# 控制台 HTTPS：放在 Nginx 后（见 nginx-safe.conf，保留 -trusted-proxies），或改用 -tls-cert/-tls-key 直接提供。
+[Unit]
+Description=safe management server
+After=network-online.target postgresql.service clickhouse-server.service
+Wants=network-online.target
+
+[Service]
+User=safe
+Group=safe
+EnvironmentFile=/etc/safe/safe.env
+WorkingDirectory=/var/lib/safe
+# 数据库连接串从环境变量 SAFE_DB / SAFE_EVENTS_DB 读取，不放在命令行上（否则密码会出现在进程列表里）
+ExecStart=/usr/local/bin/safe-server -addr 127.0.0.1:8080 -node-addr :8443 \
+    -pki-dir /var/lib/safe/pki -web /usr/local/share/safe/web -trusted-proxies 127.0.0.1/32
+Restart=always
+RestartSec=5
+StateDirectory=safe
+StateDirectoryMode=0700
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -104,12 +105,38 @@ func (l *loginLimiter) reset(ip string) {
 	delete(l.failures, ip)
 }
 
-func clientIP(r *http.Request) string {
+// clientIP 返回请求方的真实 IP。只有直连方是受信任的反向代理时才采用 X-Forwarded-For，
+// 并从右往左取第一个非代理地址（最右侧是离我们最近的代理追加的，左侧部分可能被客户端伪造）。
+func (s *Server) clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
-		return r.RemoteAddr
+		host = r.RemoteAddr
+	}
+	peer, err := netip.ParseAddr(host)
+	if err != nil || !s.trustedProxy(peer) {
+		return host
+	}
+	parts := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for i := len(parts) - 1; i >= 0; i-- {
+		a, err := netip.ParseAddr(strings.TrimSpace(parts[i]))
+		if err != nil {
+			return host
+		}
+		if !s.trustedProxy(a) {
+			return a.String()
+		}
 	}
 	return host
+}
+
+func (s *Server) trustedProxy(a netip.Addr) bool {
+	a = a.Unmap()
+	for _, p := range s.cfg.TrustedProxies {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // dummyHash 用于用户不存在时也执行一次 bcrypt，避免通过响应时间枚举用户名。
@@ -127,7 +154,7 @@ type loginResponse struct {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	if s.limiter.blocked(ip) {
 		s.audit(r, "-", "auth.login", "", "blocked: too many failed attempts", false)
 		writeError(w, http.StatusTooManyRequests, "too many failed attempts, try again later")

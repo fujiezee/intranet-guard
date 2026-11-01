@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,6 +26,11 @@ import (
 type Config struct {
 	CA     *pki.CA // 内部 CA，用于节点注册与 mTLS
 	WebDir string  // 前端构建产物目录（web/dist），为空则不托管前端
+
+	// TrustedProxies 是可信反向代理的地址段：来自这些地址的请求按 X-Forwarded-For 识别真实客户端 IP。
+	TrustedProxies []netip.Prefix
+	// HSTS 为 true 时（控制台经 HTTPS 提供）下发 Strict-Transport-Security，要求浏览器以后只用 HTTPS 访问。
+	HSTS bool
 
 	// 旧版共享 token（已弃用）：设置后控制台端口上仍接受 token 认证的探针 / Agent，方便迁移。
 	// 这种方式无法区分节点身份，迁移完成后应清空。
@@ -138,6 +144,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
+	if s.cfg.HSTS {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+	}
 	s.mux.ServeHTTP(w, r)
 	slog.Debug("request", "method", r.Method, "path", r.URL.Path, "dur", time.Since(start))
 }

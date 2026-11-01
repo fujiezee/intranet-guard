@@ -144,7 +144,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 	})
 	switch {
 	case errors.Is(err, store.ErrTokenInvalid):
-		slog.Warn("enrollment rejected: bad token", "kind", req.Kind, "id", req.ID, "remote", clientIP(r))
+		slog.Warn("enrollment rejected: bad token", "kind", req.Kind, "id", req.ID, "remote", s.clientIP(r))
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	case errors.Is(err, store.ErrTokenKindDiffer):
@@ -160,7 +160,7 @@ func (s *Server) enroll(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, err)
 		return
 	}
-	slog.Info("node enrolled", "kind", req.Kind, "id", req.ID, "remote", clientIP(r))
+	slog.Info("node enrolled", "kind", req.Kind, "id", req.ID, "remote", s.clientIP(r))
 	writeJSON(w, http.StatusOK, certResponse{Cert: string(certPEM), CA: string(s.cfg.CA.CertPEM)})
 }
 

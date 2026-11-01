@@ -17,7 +17,7 @@ func (s *Server) audit(r *http.Request, username, action, target, detail string,
 		username = userFrom(r.Context()).Username
 	}
 	e := model.AuditEntry{Time: time.Now(), Username: username, Action: action, Target: target, Detail: detail,
-		ClientIP: clientIP(r), Success: success}
+		ClientIP: s.clientIP(r), Success: success}
 	slog.Info("audit", "user", e.Username, "action", action, "target", target, "detail", detail, "ip", e.ClientIP, "success", success)
 	// 用独立 context：请求结束（例如客户端断开）也要写完审计记录。
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)

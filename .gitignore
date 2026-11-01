@@ -3,3 +3,4 @@ safe.db*
 pki/
 bin/
 data/
+backups/

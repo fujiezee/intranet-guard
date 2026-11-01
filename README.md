@@ -19,6 +19,40 @@ SAFE_ENROLL_TOKEN=<令牌> go run ./cmd/probe -server https://<管理中心>:844
 #   注册成功后证书保存在 -state 所在目录（默认 /var/lib/safe-probe），之后启动不再需要令牌
 ```
 
+## 控制台 HTTPS
+
+控制台默认是 HTTP，登录密码和会话令牌会明文传输（启动时有警告），生产环境请任选一种：
+
+| 方式 | 启动参数 | 说明 |
+| --- | --- | --- |
+| 公司证书 | `-tls-cert safe.crt -tls-key safe.key` | 推荐 |
+| 内部 CA 签发 | `-tls-internal` | 证书覆盖 `-node-hosts` 中的地址；管理员电脑需信任 `pki/ca.crt`（macOS：`sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain pki/ca.crt`） |
+| Nginx 反向代理 | `-addr 127.0.0.1:8080 -trusted-proxies 127.0.0.1/32` | 配置见 [deploy/nginx-safe.conf](deploy/nginx-safe.conf) |
+
+使用反向代理时必须设置 `-trusted-proxies`，否则所有请求都显示为代理的 IP：审计记录不到真实来源，
+一个人登录失败 5 次会把所有人锁住。只有来自这些地址的请求才会采信 `X-Forwarded-For`。
+
+## 部署管理中心
+
+[deploy/safe-server.service](deploy/safe-server.service) 是 systemd 单元（以非 root 的 `safe` 用户运行），安装步骤在文件头部。
+数据库连接串放在 `/etc/safe/safe.env` 的 `SAFE_DB` / `SAFE_EVENTS_DB` 中，不要写在命令行上（会出现在进程列表里）。
+
+## 备份与恢复
+
+```bash
+scripts/backup.sh                         # 主库 + pki/ + data/safe.env + ClickHouse 用户配置，保留最近 14 份
+BACKUP_EVENTS=1 scripts/backup.sh         # 同时导出 ClickHouse 事件
+SAFE_HOME=/var/lib/safe scripts/backup.sh /backup/safe     # systemd 部署
+```
+
+备份里有 CA 私钥和数据库密码，文件权限 0600，请放到受控位置；建议用 cron 每天执行。恢复：
+
+1. 停止管理中心，解压备份：`tar -xzf safe-<时间>.tar.gz`
+2. 放回 `pki/`、`data/`，以及主库：SQLite 直接替换 `safe.db`；PostgreSQL 用 `pg_restore --clean -d <库> safe.pgdump`
+3. 有事件备份时导入 ClickHouse：
+   `curl -H "X-ClickHouse-User: …" -H "X-ClickHouse-Key: …" "http://<主机>:8123/?query=INSERT+INTO+safe.host_events+FORMAT+Native" --data-binary @events/host_events.native`（ids_events 同理）
+4. 启动管理中心。CA 不变，已注册的探针和 Agent 无需重新注册。
+
 ## 使用 PostgreSQL（生产环境推荐）
 
 ```bash
