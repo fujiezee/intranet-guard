@@ -52,6 +52,20 @@ func TestRunUpgrade(t *testing.T) {
 	}
 	old := func() bool { b, _ := os.ReadFile(exe); return string(b) == "OLD" }
 
+	// 伪造签名：标记为安全事件，让管理中心告警
+	badSig := cmd("upg-00000009", "9.9.9", []byte("x"))
+	badSig.Params["signature"] = base64.StdEncoding.EncodeToString(make([]byte, ed25519.SignatureSize))
+	if r := a.runUpgrade(badSig); r.Status != "error" || r.Code != model.ResultSignatureRejected || !old() {
+		t.Errorf("badSig signature: %+v", r)
+	}
+	// 开发构建没有公钥：失败，但不是安全事件
+	savedKeys := ReleaseKeys
+	ReleaseKeys = ""
+	if r := a.runUpgrade(cmd("upg-0000000a", "9.9.9", []byte("x"))); r.Status != "error" || r.Code != "" || !old() {
+		t.Errorf("no key: %+v", r)
+	}
+	ReleaseKeys = savedKeys
+
 	// 校验失败：不替换
 	body = fakeVersion(`echo "version=9.9.9 id=x ok"; exit 0`)
 	bad := cmd("upg-00000001", "9.9.9", []byte("签名时的内容与下载到的不同"))

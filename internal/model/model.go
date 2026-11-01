@@ -192,6 +192,7 @@ const (
 	AlertLateralMovement   AlertType = "lateral_movement"
 	AlertAccountChange     AlertType = "account_change"
 	AlertDomainAttack      AlertType = "domain_attack"
+	AlertUpgradeRejected   AlertType = "upgrade_rejected" // Agent 拒绝了未通过发布签名验证的升级包
 )
 
 // IDSEvent 是探针从 Suricata 告警中归一化出的流量检测事件。
@@ -391,7 +392,11 @@ type CommandResult struct {
 	ID     string `json:"id"`
 	Status string `json:"status"` // done / not_applicable / error
 	Detail string `json:"detail,omitempty"`
+	Code   string `json:"code,omitempty"` // 需要管理中心专门处理的失败原因
 }
+
+// ResultSignatureRejected：升级包没有通过发布签名验证。
+const ResultSignatureRejected = "signature_rejected"
 
 type SimulationStatus string
 

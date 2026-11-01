@@ -4,7 +4,7 @@ PG_DSN ?= postgres://safe@127.0.0.1:54329/safe_test?sslmode=disable
 CH_URL ?= clickhouse://default:@127.0.0.1:8123
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-# 发布公钥写入 Agent，私钥只保存在离线环境（SAFE_SIGN_KEY 指向私钥文件），见 docs/RELEASING.md
+# 发布公钥写入 Agent 和管理中心，私钥只保存在离线环境（SAFE_SIGN_KEY 指向私钥文件），见 docs/RELEASING.md
 RELEASE_PUBKEY ?= $(shell cat release.pub 2>/dev/null)
 AGENT_VERSION_FLAG = -X safe/internal/agent.Version=$(VERSION) -X safe/internal/agent.ReleaseKeys=$(RELEASE_PUBKEY)
 
@@ -46,7 +46,7 @@ release: web
 	printf '{"version": "%s"}\n' '$(VERSION)' > dist/downloads/manifest.json
 	for arch in amd64 arm64; do \
 		d=dist/safe-$(VERSION)-linux-$$arch; mkdir -p $$d; \
-		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags='-s -w -X safe/internal/server.Version=$(VERSION)' -o $$d/safe-server ./cmd/server; \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags='-s -w -X safe/internal/server.Version=$(VERSION) -X safe/internal/server.ReleaseKeys=$(RELEASE_PUBKEY)' -o $$d/safe-server ./cmd/server; \
 		cp -R web/dist $$d/web; cp -R dist/downloads $$d/downloads; \
 		install -m 755 scripts/install.sh scripts/backup.sh $$d/; \
 		tar -czf $$d.tar.gz -C dist safe-$(VERSION)-linux-$$arch; \

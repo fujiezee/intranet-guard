@@ -104,6 +104,18 @@ func AgentOffline(hostIP, agentID string, lastSeen time.Time) DedupAlert {
 	}
 }
 
+// UpgradeRejected：Agent 拒绝了升级包。问题在管理中心一侧，同一版本只告警一次，多台 Agent 拒绝不会形成告警风暴。
+func UpgradeRejected(hostIP, agentID, target string) DedupAlert {
+	return DedupAlert{
+		Alert: model.Alert{
+			Type: model.AlertUpgradeRejected, Severity: model.SeverityHigh, IP: hostIP,
+			Message: fmt.Sprintf("%s (%s) 拒绝了版本 %s 的升级包：发布签名验证失败。升级包可能被替换，或管理中心已被攻破；也可能部署了未签名的安装包。自动升级已暂停",
+				hostIP, agentID, target),
+		},
+		DedupKey: "upgrade-rejected:" + target,
+	}
+}
+
 // Honeypot 为一次蜜罐访问生成告警。告警关联到访问来源：内网中访问蜜罐的主机很可能已失陷或正在被用于探测。
 func Honeypot(probeID string, ev model.HoneypotEvent) DedupAlert {
 	msg := fmt.Sprintf("%s 访问了蜜罐（探针 %s 的 %s 服务，端口 %d）：%s", ev.SrcIP, probeID, ev.Service, ev.Port, ev.Detail)

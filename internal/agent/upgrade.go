@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -66,7 +67,11 @@ func (a *Agent) runUpgrade(cmd model.AgentCommand) model.CommandResult {
 	}
 	// 下载前先验证，签名不对时不写入也不执行任何内容
 	if err := signing.Verify(ReleaseKeys, p["version"], p["file"], p["sha256"], p["signature"]); err != nil {
-		return fail("发布签名验证失败：%v", err)
+		res := fail("发布签名验证失败：%v", err)
+		if !errors.Is(err, signing.ErrNoKey) {
+			res.Code = model.ResultSignatureRejected
+		}
+		return res
 	}
 	if a.cfg.HTTP == nil {
 		return fail("未使用证书接入管理中心，不支持在线升级")

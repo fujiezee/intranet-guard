@@ -10,6 +10,9 @@ import (
 	"strings"
 )
 
+// ErrNoKey 表示构建时没有写入公钥（开发构建），不是签名本身有问题。
+var ErrNoKey = errors.New("this build has no release public key")
+
 // message 把版本、文件名和哈希绑定在一起：签名不能用于其他版本或其他平台的程序。
 func message(version, file, sha256Hex string) []byte {
 	return []byte("intranet-guard-agent-release-v1\n" + version + "\n" + file + "\n" + sha256Hex + "\n")
@@ -22,7 +25,7 @@ func Sign(key ed25519.PrivateKey, version, file, sha256Hex string) string {
 // Verify 用逗号分隔的公钥列表验证签名，任意一个通过即可（更换密钥时新旧公钥并存）。
 func Verify(publicKeys, version, file, sha256Hex, signature string) error {
 	if strings.TrimSpace(publicKeys) == "" {
-		return errors.New("this build has no release public key")
+		return ErrNoKey
 	}
 	sig, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil || len(sig) != ed25519.SignatureSize {
