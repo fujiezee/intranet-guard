@@ -17,6 +17,7 @@ const leaderLockKey = 0x5afe_1ead
 // SQLite 只支持单实例，总是主实例。
 type Leader struct {
 	s      *Store
+	db     *sql.DB // 选主专用的连接池：不能与请求处理共用，否则高负载时连接池被占满，主实例宕机后无人能接手
 	leader atomic.Bool
 	conn   *sql.Conn
 	// Interval 是获取锁 / 检查连接的周期
@@ -27,7 +28,16 @@ func (s *Store) NewLeader() *Leader {
 	l := &Leader{s: s, Interval: 5 * time.Second}
 	if s.db.d != dialectPostgres {
 		l.leader.Store(true)
+		return l
 	}
+	db, err := sql.Open("pgx", s.dsn)
+	if err != nil { // 只解析 DSN，不会在这里失败（Open 时已用同一 DSN 成功连接过）
+		slog.Error("leader election pool", "err", err)
+		return l
+	}
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	l.db = db
 	return l
 }
 
@@ -35,9 +45,10 @@ func (l *Leader) IsLeader() bool { return l.leader.Load() }
 
 // Run 持续竞选，直到 ctx 结束（结束时释放锁）。
 func (l *Leader) Run(ctx context.Context) {
-	if l.s.db.d != dialectPostgres {
+	if l.db == nil {
 		return
 	}
+	defer l.db.Close()
 	t := time.NewTicker(l.Interval)
 	defer t.Stop()
 	defer l.release()
@@ -65,7 +76,7 @@ func (l *Leader) check(ctx context.Context) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
-	conn, err := l.s.db.DB.Conn(cctx)
+	conn, err := l.db.Conn(cctx)
 	if err != nil {
 		return
 	}

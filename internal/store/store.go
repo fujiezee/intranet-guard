@@ -22,6 +22,7 @@ var ErrNotFound = errors.New("not found")
 
 type Store struct {
 	db     *DB
+	dsn    string // 选主需要单独建立连接
 	events EventStore
 	intel  intelCache // 管理中心侧情报匹配用的缓存，按情报版本刷新
 }
@@ -320,6 +321,14 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 // Open 打开数据库并建表。dsn 以 postgres:// 或 postgresql:// 开头时使用 PostgreSQL，否则视为 SQLite 文件路径。
 func Open(dsn string) (*Store, error) {
+	st, err := open(dsn)
+	if err == nil {
+		st.dsn = dsn
+	}
+	return st, err
+}
+
+func open(dsn string) (*Store, error) {
 	var db *DB
 	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
 		sqlDB, err := sql.Open("pgx", dsn)

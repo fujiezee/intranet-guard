@@ -21,9 +21,11 @@ step() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 ok() { PASS=$((PASS + 1)); printf '  \033[32m✓\033[0m %s\n' "$*"; }
 fail() {
 	printf '  \033[31m✗\033[0m %s\n' "$*"
-	for f in "$W/a.log" "$W/b.log" "$W/loadtest.log"; do
+	for f in "$W/a.log" "$W/b.log"; do
 		[ -f "$f" ] && { echo "--- $(basename "$f")（最后 20 行）"; tail -20 "$f"; }
 	done
+	[ -f "$W/loadtest.log" ] && { echo "--- 压测进度"; grep -E 'progress|enrollment' "$W/loadtest.log" | sed 's/^.*INFO //'; }
+	[ -f "$W/cpu.log" ] && { echo "--- CPU 占用（每 10 秒采样）"; cat "$W/cpu.log"; }
 	exit 1
 }
 json() { python3 -c "import sys,json;d=json.load(sys.stdin);print($1)"; }
@@ -88,6 +90,17 @@ SAFE_LOADTEST_PASSWORD=$PW "$BIN/safe-loadtest" -console http://127.0.0.1:18080 
 	-nodes https://127.0.0.1:18443,https://127.0.0.1:18444 -agents "$AGENTS" -interval "$INTERVAL" -duration "$DURATION" \
 	-events "$EVENTS" -alert-every "${ALERT_EVERY:-100}" -max-p99 3s >"$W/loadtest.log" 2>&1 &
 LT=$!
+# 每 10 秒记录各进程的 CPU 占用（百分比，按单核计；4 核满载为 400）
+(
+	while kill -0 $LT 2>/dev/null; do
+		printf '%s ' "$(date +%T)"
+		ps -eo pcpu=,rss=,args= | awk '
+			/safe-server.*18080/ {a+=$1} /safe-server.*18081/ {b+=$1} /safe-loadtest/ {l+=$1}
+			/postgres/ {p+=$1} /clickhouse/ {c+=$1}
+			END {printf "实例A %.0f%%  实例B %.0f%%  压测 %.0f%%  PostgreSQL %.0f%%  ClickHouse %.0f%%\n", a, b, l, p, c}'
+		sleep 10
+	done
+) >"$W/cpu.log" 2>&1 &
 wait_for "全部 Agent 注册完成" 600 "grep -q 'enrollment finished' $W/loadtest.log"
 grep 'enrollment finished' "$W/loadtest.log" | sed 's/^.*INFO /    /'
 # 预热一个周期 + 持续时间的一半后杀掉 A（kill -9：模拟宕机，不做任何清理）
@@ -99,6 +112,7 @@ wait_for "实例 B 接管后台任务" 30 "grep -q 'became leader' $W/b.log"
 LT_STATUS=0
 wait $LT || LT_STATUS=$?
 grep progress "$W/loadtest.log" | sed 's/^.*INFO progress /    /'
+echo "    CPU 占用："; sed 's/^/    /' "$W/cpu.log"
 sed -n '/^{/,/^}/p' "$W/loadtest.log" | tee "$W/summary.json" | sed 's/^/    /'
 [ "$LT_STATUS" = 0 ] && ok "压测达标：错误率 < 1%，p99 < 3 秒（含切换过程）" || fail "压测未达标（见上方结果）"
 SWITCHED=$(grep -c 'switched to another instance' "$W/loadtest.log" || true)

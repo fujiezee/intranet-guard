@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -186,6 +187,13 @@ func reportLoop(ctx context.Context, c *node.Client, i int, interval time.Durati
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := c.HTTP.Do(req)
 		ok := err == nil && resp.StatusCode < 300
+		var reason string
+		switch {
+		case err != nil:
+			reason = errReason(err)
+		case !ok:
+			reason = "HTTP " + resp.Status
+		}
 		if resp != nil {
 			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
@@ -194,7 +202,7 @@ func reportLoop(ctx context.Context, c *node.Client, i int, interval time.Durati
 			return // 测试结束时被取消的请求不计入
 		}
 		if begin.After(steadyAt) {
-			st.record(time.Since(begin), n, ok)
+			st.record(time.Since(begin), n, ok, reason)
 		}
 		if alert && ok {
 			st.alerts.Add(1) // 服务端已接受、应产生一条告警
@@ -239,6 +247,7 @@ func report(r *rand.Rand, info model.AgentInfo, avg int, alert bool, k int) ([]b
 
 type stats struct {
 	alerts    atomic.Int64
+	reasons   map[string]int // 错误原因 → 次数
 	mu        sync.Mutex
 	latencies []time.Duration
 	events    int64
@@ -246,9 +255,15 @@ type stats struct {
 	window    struct{ reqs, events, errors int64 }
 }
 
-func (s *stats) record(d time.Duration, events int, ok bool) {
+func (s *stats) record(d time.Duration, events int, ok bool, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if reason != "" {
+		if s.reasons == nil {
+			s.reasons = map[string]int{}
+		}
+		s.reasons[reason]++
+	}
 	s.latencies = append(s.latencies, d)
 	s.window.reqs++
 	if ok {
@@ -261,14 +276,15 @@ func (s *stats) record(d time.Duration, events int, ok bool) {
 }
 
 type summary struct {
-	Requests     int     `json:"requests"`
-	ReqPerSec    float64 `json:"requests_per_second"`
-	EventsPerSec float64 `json:"events_per_second"`
-	ErrorRate    float64 `json:"error_rate"`
-	P50Ms        float64 `json:"p50_ms"`
-	P95Ms        float64 `json:"p95_ms"`
-	P99Ms        float64 `json:"p99_ms"`
-	MaxMs        float64 `json:"max_ms"`
+	Requests     int            `json:"requests"`
+	ReqPerSec    float64        `json:"requests_per_second"`
+	EventsPerSec float64        `json:"events_per_second"`
+	ErrorRate    float64        `json:"error_rate"`
+	P50Ms        float64        `json:"p50_ms"`
+	P95Ms        float64        `json:"p95_ms"`
+	P99Ms        float64        `json:"p99_ms"`
+	MaxMs        float64        `json:"max_ms"`
+	Errors       map[string]int `json:"errors,omitempty"` // 按原因统计
 }
 
 func (s *stats) summary(d time.Duration) summary {
@@ -283,7 +299,7 @@ func (s *stats) summary(d time.Duration) summary {
 		return float64(l[min(len(l)-1, int(p*float64(len(l))))]) / float64(time.Millisecond)
 	}
 	sum := summary{Requests: len(l), ReqPerSec: float64(len(l)) / d.Seconds(), EventsPerSec: float64(s.events) / d.Seconds(),
-		P50Ms: pct(0.5), P95Ms: pct(0.95), P99Ms: pct(0.99), MaxMs: pct(1)}
+		P50Ms: pct(0.5), P95Ms: pct(0.95), P99Ms: pct(0.99), MaxMs: pct(1), Errors: s.reasons}
 	if len(l) > 0 {
 		sum.ErrorRate = float64(s.errors) / float64(len(l))
 	}
@@ -315,4 +331,19 @@ func progress(ctx context.Context, s *stats, every time.Duration) {
 		slog.Info("progress", "req_per_s", fmt.Sprintf("%.0f", float64(w.reqs)/every.Seconds()),
 			"events_per_s", fmt.Sprintf("%.0f", float64(w.events)/every.Seconds()), "errors", w.errors, "p99", p99.Round(time.Millisecond))
 	}
+}
+
+// errReason 把网络错误归类，便于统计（去掉地址、端口等每次不同的部分）。
+func errReason(err error) string {
+	msg := err.Error()
+	for _, k := range []string{"context deadline exceeded", "Client.Timeout", "TLS handshake timeout", "connection refused",
+		"connection reset", "EOF", "i/o timeout", "too many open files", "cannot assign requested address"} {
+		if strings.Contains(msg, k) {
+			return k
+		}
+	}
+	if len(msg) > 80 {
+		msg = msg[:80]
+	}
+	return msg
 }
