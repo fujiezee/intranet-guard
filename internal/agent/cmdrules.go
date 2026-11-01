@@ -20,6 +20,7 @@ type ExecInfo struct {
 	// StdioNetwork 为 true 表示标准输入或输出连接到 TCP 连接（不是本地套接字或管道）
 	StdioNetwork bool
 	StdioRemote  string // 对端地址
+	Container    Container
 }
 
 // CmdFinding 是一条命令检测结果。
@@ -81,6 +82,9 @@ func EvaluateExec(e ExecInfo) []CmdFinding {
 			out = append(out, CmdFinding{r.id, r.name, r.severity, "命令匹配特征"})
 		}
 	}
+	if e.Container.ID != "" {
+		out = append(out, evaluateContainer(e, comm, base)...)
+	}
 	parent := strings.TrimSpace(e.ParentComm)
 	if strings.HasPrefix(parent, "php-fpm") {
 		parent = "php-cgi"
@@ -93,6 +97,34 @@ func EvaluateExec(e ExecInfo) []CmdFinding {
 		case appServers[parent] && shells[comm]:
 			out = append(out, CmdFinding{"app_spawn_shell", "应用服务派生 shell", "medium",
 				"应用进程 " + e.ParentComm + " 启动了 shell，确认是否为业务正常行为"})
+		}
+	}
+	return out
+}
+
+// 容器内的规则：容器通常只运行单一业务进程，交互式 shell 和以下操作都值得关注。
+var containerRules = []struct {
+	id, name, severity, reason string
+	re                         *regexp.Regexp
+}{
+	{"container_escape", "容器逃逸迹象", "high", "尝试进入宿主机命名空间、挂载宿主机磁盘或利用 cgroup / 内核接口",
+		regexp.MustCompile(`\bnsenter\b.*(-t\s*1\b|--target[= ]1\b)|\bmount\b.*/dev/(sd|vd|xvd|nvme|mapper/)|release_agent|/proc/sysrq-trigger|core_pattern|\bchroot\s+/host\b`)},
+	{"container_runtime_socket", "访问容器运行时", "high", "容器内访问 Docker / containerd 套接字，可借此控制宿主机上的所有容器",
+		regexp.MustCompile(`(docker|containerd|crio)\.sock`)},
+	// 不包括执行 kubectl：集群内的任务（Helm 安装、CI Runner、运维 Job）经常正常使用
+	{"k8s_token_access", "读取 K8s 凭据", "medium", "命令中直接读取 ServiceAccount 令牌或访问集群 API（常见于失陷后的横向移动）",
+		regexp.MustCompile(`/var/run/secrets/kubernetes\.io/serviceaccount|kubernetes\.default(\.svc)?\b`)},
+}
+
+func evaluateContainer(e ExecInfo, comm, base string) []CmdFinding {
+	var out []CmdFinding
+	if (shells[comm] || shells[base]) && e.TTY {
+		out = append(out, CmdFinding{"container_shell", "容器内交互式 shell", "medium",
+			"在容器中打开了交互式终端（kubectl exec -it / docker exec -it）"})
+	}
+	for _, r := range containerRules {
+		if r.re.MatchString(e.Cmdline) {
+			out = append(out, CmdFinding{r.id, r.name, r.severity, r.reason})
 		}
 	}
 	return out

@@ -365,6 +365,23 @@ Webshell 落地（只含注释的 PHP 文件）。均为无害动作，2 分钟�
 
 资产组只影响横向移动这一条规则，不影响爆破、可疑命令等其他检测：跳板机本身被攻破后执行的恶意命令照常告警。
 
+### Kubernetes
+
+Agent 以 DaemonSet 部署（控制台"节点管理 → 生成 Agent 令牌 → Kubernetes"给出三行命令，清单由管理中心
+`/install/agent-k8s.yaml` 生成，含管理中心地址与公钥指纹）：
+
+- init 容器（curlimages/curl）按公钥指纹从管理中心下载 Agent 到节点的 `/var/lib/safe-agent-k8s/bin`；
+  主容器（debian-slim，只用 nsenter）进入节点的挂载 / 网络 / UTS / IPC 命名空间运行它。因此与节点上直接安装的 Agent
+  行为完全相同（登录日志、文件完整性、命令审计、自检、处置都作用于节点），不需要自建镜像，也不需要 K8s API 权限；
+  代价是需要特权容器、hostPID、hostNetwork。证书保存在节点上，Pod 重建不需要令牌。
+- 容器识别：命令审计时读取进程的 `/proc/<pid>/cgroup` 得到容器 ID 和 Pod UID，再按节点上
+  `/var/log/pods/<命名空间>_<Pod>_<UID>` 的目录名得到 Pod，告警写明"位置：Pod 命名空间/名称（容器 ID）"。
+  与 Agent 同一 cgroup 的进程（Agent 自己的自检、处置命令）不算容器进程。
+- 容器内规则（只对容器内进程生效）：交互式 shell（kubectl / docker exec -it，中）、逃逸迹象（nsenter 宿主机 PID 1、
+  挂载宿主机磁盘、cgroup release_agent、sysrq / core_pattern，高）、访问容器运行时套接字（高）、
+  命令中读取 ServiceAccount 令牌或访问集群 API（中）。容器内执行 kubectl 不告警（集群内任务经常正常使用）。
+- 节点通常应加入一个"集群"资产组，避免节点之间的正常登录被判为横向移动。
+
 ## 20. 权限模型
 
 | 角色 | 权限 |

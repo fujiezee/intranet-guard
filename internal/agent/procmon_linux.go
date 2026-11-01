@@ -122,6 +122,11 @@ func readExecInfo(pid int, users *userCache) (ExecInfo, bool) {
 			}
 		}
 	}
+	// 与 Agent 同一 cgroup 的进程是 Agent 自己启动的（自检、处置命令）：以 DaemonSet 运行时 Agent 本身在 Pod 中，
+	// 这些进程不应被当作业务容器内的进程
+	if cg, err := os.ReadFile(dir + "/cgroup"); err == nil && string(cg) != selfCgroup {
+		e.Container = pods.resolve(ParseCgroup(string(cg)))
+	}
 	if e.PPID > 0 {
 		pdir := "/proc/" + strconv.Itoa(e.PPID)
 		e.ParentComm = readTrim(pdir + "/comm")
@@ -205,3 +210,11 @@ func (c *userCache) name(uid string) string {
 	c.m[uid] = n
 	return n
 }
+
+// pods 用于把容器进程对应到 Kubernetes Pod（节点上的 /var/log/pods）。
+var pods = newPodIndex("/var/log/pods")
+
+var selfCgroup = func() string {
+	b, _ := os.ReadFile("/proc/self/cgroup")
+	return string(b)
+}()

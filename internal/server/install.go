@@ -15,6 +15,11 @@ import (
 //go:embed install/node.sh.tmpl
 var nodeScriptSrc string
 
+//go:embed install/agent-k8s.yaml.tmpl
+var k8sManifestSrc string
+
+var k8sManifest = template.Must(template.New("agent-k8s.yaml").Parse(k8sManifestSrc))
+
 //go:embed install/agent.ps1.tmpl
 var winScriptSrc string
 
@@ -34,7 +39,7 @@ var (
 // 节点用什么地址下载脚本，之后就用同一地址连接管理中心。
 func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 	script := r.PathValue("script")
-	kind := map[string]string{"agent.sh": "agent", "probe.sh": "probe", "agent.ps1": "agent"}[script]
+	kind := map[string]string{"agent.sh": "agent", "probe.sh": "probe", "agent.ps1": "agent", "agent-k8s.yaml": "agent"}[script]
 	if kind == "" {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -44,6 +49,11 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := map[string]string{"Kind": kind, "ServerURL": "https://" + r.Host, "Pin": s.cfg.InstallPin}
+	if strings.HasSuffix(script, ".yaml") {
+		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
+		_ = k8sManifest.Execute(w, data)
+		return
+	}
 	if strings.HasSuffix(script, ".ps1") {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_ = winScript.Execute(w, data)

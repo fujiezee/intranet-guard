@@ -72,6 +72,13 @@ func TestInstallEndpoints(t *testing.T) {
 		}
 	}
 
+	code, manifest := get("/install/agent-k8s.yaml", "10.1.2.3:8443")
+	if code != http.StatusOK || !strings.Contains(manifest, `value: "https://10.1.2.3:8443"`) ||
+		!strings.Contains(manifest, `value: "`+testPin+`"`) || !strings.Contains(manifest, "kind: DaemonSet") ||
+		strings.Contains(manifest, "{{") || strings.Contains(manifest, "\t") {
+		t.Errorf("k8s manifest: %d\n%s", code, manifest)
+	}
+
 	// Host 头会写进脚本，含引号等字符时拒绝（防止注入命令）。
 	if code, _ := get("/install/agent.sh", "evil';rm -rf /;'"); code != http.StatusBadRequest {
 		t.Errorf("malicious host: %d", code)
@@ -122,7 +129,7 @@ func checkShellVars(t *testing.T, name, script string) {
 }
 
 func TestShellScriptsVarBraces(t *testing.T) {
-	for _, f := range []string{"../../scripts/install.sh", "../../scripts/backup.sh", "../../scripts/test-install.sh", "../../scripts/e2e-linux.sh"} {
+	for _, f := range []string{"../../scripts/install.sh", "../../scripts/backup.sh", "../../scripts/test-install.sh", "../../scripts/e2e-linux.sh", "../../scripts/e2e-k8s.sh"} {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

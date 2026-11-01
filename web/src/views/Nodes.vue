@@ -83,8 +83,13 @@
         <el-radio-group v-if="created.kind === 'agent'" v-model="platform" size="small" style="margin-top: 8px">
           <el-radio-button value="linux">Linux</el-radio-button>
           <el-radio-button value="windows">Windows</el-radio-button>
+          <el-radio-button value="k8s">Kubernetes</el-radio-button>
         </el-radio-group>
-        <p v-if="windows" class="hint-block">
+        <p v-if="k8s" class="hint-block">
+          在能执行 kubectl 的机器上运行（为每个节点部署一个 Agent，包括之后新加入的节点）。
+          令牌使用次数需不少于节点数，当前为 <b>{{ created.max_uses }}</b>：
+        </p>
+        <p v-else-if="windows" class="hint-block">
           在每台要接入的 Windows 服务器上，以管理员身份打开 <b>Windows PowerShell</b>（5.1，不是 PowerShell 7），粘贴执行
           （自动下载、开启安全审计、注册并安装为系统服务）：
         </p>
@@ -100,7 +105,9 @@
         <p class="hint-block">
           命令固定了管理中心的公钥指纹，即使中间人冒充管理中心也无法替换下载内容；
           令牌中的 CA 指纹则用于注册时再次校验。
-          <template v-if="windows">支持 Windows Server 2012 R2 及以上；同一令牌可用于多台服务器（不超过令牌的使用次数）。</template>
+          <template v-if="k8s">需要特权容器、hostPID 和 hostNetwork（与节点上直接安装的 Agent 行为相同，可看到所有容器内执行的命令）；
+            镜像 curlimages/curl、debian:bookworm-slim 来自 Docker Hub，内网环境请同步到内部仓库。注册完成后可删除 Secret。</template>
+          <template v-else-if="windows">支持 Windows Server 2012 R2 及以上；同一令牌可用于多台服务器（不超过令牌的使用次数）。</template>
           <template v-else>要求目标服务器的 curl ≥ 7.39（CentOS 7 等过旧系统请改用离线安装）。</template>
         </p>
       </template>
@@ -134,6 +141,7 @@ const installInfo = ref(null)
 const probeID = ref('')
 const platform = ref('linux')
 const windows = computed(() => created.value?.kind === 'agent' && platform.value === 'windows')
+const k8s = computed(() => created.value?.kind === 'agent' && platform.value === 'k8s')
 const binaryAvailable = computed(() =>
   installInfo.value?.available.some((f) => f.startsWith(windows.value ? 'safe-agent-windows-' : `safe-${created.value?.kind}-linux-`)),
 )
@@ -143,6 +151,13 @@ const installCommand = computed(() => {
   const { kind, token } = created.value
   if (windows.value) return installInfo.value.windows_command.replace('__TOKEN__', token)
   const server = `https://${location.hostname}:${installInfo.value.node_port}`
+  if (k8s.value) {
+    return [
+      'kubectl create namespace safe-system',
+      `kubectl -n safe-system create secret generic safe-enroll --from-literal=token='${token}'`,
+      `curl -fsSLk --pinnedpubkey '${installInfo.value.pin}' ${server}/install/agent-k8s.yaml | kubectl apply -f -`,
+    ].join('\n')
+  }
   const env = [`SAFE_ENROLL_TOKEN='${token}'`]
   if (kind === 'probe') env.push(`SAFE_PROBE_ID='${probeID.value.trim() || '<网段名>'}'`)
   return `curl -fsSLk --pinnedpubkey '${installInfo.value.pin}' ${server}/install/${kind}.sh | sudo ${env.join(' ')} sh`

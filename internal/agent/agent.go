@@ -141,14 +141,18 @@ func (a *Agent) onExec(e ExecInfo) {
 	}
 	now := time.Now()
 	var events []model.HostEvent
+	where := ""
+	if c := e.Container.String(); c != "" {
+		where = "；位置：" + c
+	}
 	for _, f := range findings {
-		detail := fmt.Sprintf("[%s] %s；命令：%s；父进程：%s", f.Name, f.Reason, e.Cmdline, e.ParentComm)
+		detail := fmt.Sprintf("[%s] %s；命令：%s；父进程：%s%s", f.Name, f.Reason, e.Cmdline, e.ParentComm, where)
 		events = append(events, model.HostEvent{Type: model.EventSuspiciousCommand, Time: now, User: e.User,
 			SrcIP: hostOf(e.StdioRemote), Path: e.Exe, Detail: detail, Severity: f.Severity})
 	}
 	if len(findings) == 0 {
 		events = append(events, model.HostEvent{Type: model.EventCommand, Time: now, User: e.User, Path: e.Exe,
-			Detail: e.Cmdline + "（父进程 " + e.ParentComm + "）"})
+			Detail: e.Cmdline + "（父进程 " + e.ParentComm + "）" + where})
 	}
 
 	a.execMu.Lock()
