@@ -228,25 +228,6 @@ func (s *Store) InsertIDSEvents(ctx context.Context, probeID string, events []mo
 	return s.insert(ctx, "ids_events", rows)
 }
 
-func (s *Store) CountLoginFailures(ctx context.Context, agentID, srcIP string, from, to time.Time) (int, error) {
-	out, err := s.do(ctx, s.database, `
-		SELECT count() AS n FROM host_events
-		WHERE agent_id = {agent:String} AND type = {type:String} AND src_ip = {src:String}
-		  AND ts BETWEEN fromUnixTimestamp64Milli({from:Int64}) AND fromUnixTimestamp64Milli({to:Int64})
-		FORMAT JSONEachRow`, map[string]string{
-		"agent": agentID, "type": string(model.EventLoginFailed), "src": srcIP,
-		"from": strconv.FormatInt(from.UnixMilli(), 10), "to": strconv.FormatInt(to.UnixMilli(), 10),
-	}, nil)
-	if err != nil {
-		return 0, err
-	}
-	var r struct {
-		N int `json:"n"`
-	}
-	err = json.Unmarshal(out, &r)
-	return r.N, err
-}
-
 func (s *Store) ListHostEvents(ctx context.Context, f store.EventFilter) ([]model.HostEvent, error) {
 	from, to := f.Bounds()
 	if to > 253402300799000 { // ClickHouse DateTime64 上限（9999 年）

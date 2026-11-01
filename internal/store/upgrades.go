@@ -124,7 +124,9 @@ func (s *Store) NextUpgrade(ctx context.Context, agentID, current, latest string
 	err = s.db.QueryRowContext(ctx, `SELECT attempt, target, state FROM agent_upgrades WHERE agent_id = ?`, agentID).
 		Scan(&u.Attempt, &u.Target, &u.State)
 	exists := err == nil
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil // 没有升级记录是常态
+	} else if err != nil {
 		return "", "", err
 	}
 	if exists && u.State == UpgradeRunning {

@@ -102,8 +102,14 @@ func primaryIP(ctx context.Context, q querier, a model.AgentInfo) (string, error
 }
 
 func (s *Store) detectHostAlerts(ctx context.Context, hostIP, agentID string, events []model.HostEvent) ([]alert.DedupAlert, error) {
+	// 先记录本批的全部登录失败，再判定：与"先写入事件库再查询"的语义一致
+	for _, ev := range events {
+		if ev.Type == model.EventLoginFailed && ev.SrcIP != "" {
+			s.failures.add(agentID, ev.SrcIP, ev.Time)
+		}
+	}
 	countFailures := func(srcIP string, from, to time.Time) (int, error) {
-		return s.events.CountLoginFailures(ctx, agentID, srcIP, from, to)
+		return s.failures.count(agentID, srcIP, from, to), nil
 	}
 
 	var alerts []alert.DedupAlert

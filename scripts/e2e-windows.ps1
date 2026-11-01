@@ -75,6 +75,8 @@ try {
 	$info = Api GET '/install-info'
 	Check '提供 Windows Agent 下载' { @($info.available) -contains 'safe-agent-windows-amd64.exe' }
 	Check '生成 Windows 安装命令' { $info.windows_command -like '*install/agent.ps1*' }
+	# 控制台把命令中的 __HOSTPORT__ 换成管理员确认的管理中心地址；测试中管理中心在本机
+	$info.windows_command = $info.windows_command.Replace('__HOSTPORT__', '127.0.0.1:8443')
 	# 注意：PowerShell 变量名不区分大小写，不能命名为 $token（会覆盖登录会话 $script:Token）
 	$enrollToken = (Api POST '/enroll-tokens' @{ kind = 'agent'; max_uses = 1; ttl_hours = 1 }).token
 	# 测试中把上报周期缩短为 5 秒

@@ -62,6 +62,14 @@ func TestAgentUpgrades(t *testing.T) {
 		}
 	}
 
+	// 最常见的情况：已是最新版本、从未升级过（曾因"查无记录"被当成错误，导致上报失败）
+	if ups := report("new01", "0.9.0", "linux/amd64"); len(ups) != 0 {
+		t.Fatalf("up-to-date agent got an upgrade: %+v", ups)
+	}
+	if a, _, err := st.NextUpgrade(context.Background(), "never-upgraded", "0.9.0", "0.9.0", store.DefaultUpgradePolicy()); err != nil || a != "" {
+		t.Fatalf("NextUpgrade for an up-to-date agent without history: %q %v", a, err)
+	}
+
 	// 默认手动：旧版本 Agent 上报不会收到升级
 	if ups := report("web01", "0.8.0", "linux/amd64"); len(ups) != 0 {
 		t.Fatalf("manual mode sent upgrade without request: %+v", ups)

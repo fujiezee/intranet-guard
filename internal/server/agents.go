@@ -47,12 +47,10 @@ func (s *Server) agentReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cmds = append(cmds, actions...)
-	up, err := s.upgradeCommand(r, rep.Agent)
-	if err != nil {
-		writeInternal(w, err)
-		return
-	}
-	if up != nil {
+	// 升级是附加功能：出错时只记录，不能让上报失败——否则本次已领取的自检、处置指令随失败的响应一起丢失
+	if up, err := s.upgradeCommand(r, rep.Agent); err != nil {
+		slog.Warn("agent upgrade check", "agent", rep.Agent.ID, "err", err)
+	} else if up != nil {
 		cmds = append(cmds, *up)
 	}
 	writeJSON(w, http.StatusOK, model.AgentReportResponse{Commands: cmds})

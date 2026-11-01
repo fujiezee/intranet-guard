@@ -21,11 +21,12 @@ import (
 var ErrNotFound = errors.New("not found")
 
 type Store struct {
-	db     *DB
-	dsn    string // 选主需要单独建立连接
-	events EventStore
-	intel  intelCache // 管理中心侧情报匹配用的缓存，按情报版本刷新
-	logins loginWindow
+	db       *DB
+	dsn      string // 选主需要单独建立连接
+	events   EventStore
+	intel    intelCache    // 管理中心侧情报匹配用的缓存，按情报版本刷新
+	logins   loginWindow   // 横向移动检测
+	failures failureWindow // 暴力破解检测
 }
 
 const schema = `

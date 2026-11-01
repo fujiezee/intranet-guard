@@ -11,7 +11,6 @@ import (
 // 大规模部署可换成 ClickHouse（internal/chstore）。业务数据（资产、告警、漏洞等）始终在主库。
 type EventStore interface {
 	InsertHostEvents(ctx context.Context, agentID string, events []model.HostEvent) error
-	CountLoginFailures(ctx context.Context, agentID, srcIP string, from, to time.Time) (int, error)
 	ListHostEvents(ctx context.Context, f EventFilter) ([]model.HostEvent, error)
 	InsertIDSEvents(ctx context.Context, probeID string, events []model.IDSEvent) error
 	ListIDSEvents(ctx context.Context, f IDSFilter) ([]model.IDSEvent, error)
@@ -83,15 +82,6 @@ func (e *sqlEvents) InsertHostEvents(ctx context.Context, agentID string, events
 		}
 	}
 	return tx.Commit()
-}
-
-func (e *sqlEvents) CountLoginFailures(ctx context.Context, agentID, srcIP string, from, to time.Time) (int, error) {
-	var n int
-	err := e.db.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM host_events
-		WHERE agent_id = ? AND type = ? AND src_ip = ? AND ts BETWEEN ? AND ?`,
-		agentID, model.EventLoginFailed, srcIP, from.UnixMilli(), to.UnixMilli()).Scan(&n)
-	return n, err
 }
 
 func (e *sqlEvents) ListHostEvents(ctx context.Context, f EventFilter) ([]model.HostEvent, error) {
