@@ -196,12 +196,19 @@ mTLS 节点认证、PostgreSQL / ClickHouse、告警推送、操作审计、一�
 C2 心跳在 e2e 中用构造的 Suricata 记录验证（真实场景需连续 15 分钟）。**未完成**：DGA、DNS 隧道、
 非工作时间外传只有单元测试，需要在试运行的真实流量中观察误报率；文件哈希类情报尚未支持（需要 Agent 计算文件哈希）。
 
-### v0.8 集群支持（进行中）
+### v0.8 集群支持（✅ 已完成）
 
 | 事项 | 状态 |
 | --- | --- |
 | 资产组（集群 / 运维跳板）：按网段归组、筛选；集群内互访与跳板登录不计入横向移动 | ✅ |
-| Kubernetes：Agent 以 DaemonSet 部署，告警标注命名空间 / Pod，检测容器内交互 shell 与逃逸迹象；CI 用 k3s 真实集群验证 | 开发完成，CI 验证中 |
+| Kubernetes：Agent 以 DaemonSet 部署，告警标注命名空间 / Pod，检测容器内交互 shell 与逃逸迹象；CI 用 k3s 真实集群验证 | ✅ |
+
+**结果**：真实 k3s（v1.31）集群上 16 项端到端全部通过：按控制台命令部署 DaemonSet 后 9 秒上线（含镜像拉取）、
+命令审计在 DaemonSet 中正常启用；业务 Pod 中读取 ServiceAccount 令牌、nsenter 宿主机、kubectl exec -it
+全部告警并定位到 Pod；集群系统组件未产生容器告警；4 个自检场景通过；Pod 重建无需令牌；卸载后状态正确。
+资产组在 SQLite 与 PostgreSQL + ClickHouse 上测试通过。**未做**：Pod 内的 Webshell 检测（看不到容器文件系统）、
+按 Pod 隔离（目前隔离整个节点）、负载均衡 VIP 背后的主机定位；多节点集群与其他发行版（ACK / TKE / 自建 kubeadm）
+需在试运行中验证。CI 中发现：k3s 自带的 Traefik 会占用节点 443，管理中心不宜与 Ingress 同机部署。
 
 ### v0.9 规模与高可用（约 1～2 天；压测需要足够的机器资源）
 
