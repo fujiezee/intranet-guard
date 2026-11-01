@@ -233,6 +233,21 @@ CREATE TABLE IF NOT EXISTS simulations (
 	finished_at TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS simulations_agent ON simulations(agent_id, status);
+CREATE TABLE IF NOT EXISTS response_actions (
+	id          TEXT PRIMARY KEY,
+	agent_id    TEXT NOT NULL,
+	type        TEXT NOT NULL,
+	params      TEXT NOT NULL,
+	reason      TEXT NOT NULL,
+	status      TEXT NOT NULL,
+	result      TEXT NOT NULL DEFAULT '',
+	created_by  TEXT NOT NULL,
+	approved_by TEXT NOT NULL DEFAULT '',
+	rollback_of TEXT NOT NULL DEFAULT '',
+	created_at  TIMESTAMP NOT NULL,
+	updated_at  TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS response_actions_agent ON response_actions(agent_id, status);
 CREATE TABLE IF NOT EXISTS sessions (
 	token_hash TEXT PRIMARY KEY,
 	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

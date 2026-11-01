@@ -4,6 +4,8 @@ package agent
 
 import (
 	"net"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -63,5 +65,26 @@ func TestReadExecInfoReverseShell(t *testing.T) {
 	}
 	if e, _ := readExecInfo(pid, &userCache{m: map[string]string{}}); e.StdioNetwork || len(EvaluateExec(e)) != 0 {
 		t.Errorf("plain shell flagged: %+v", e)
+	}
+}
+
+// 结束进程前核对可执行文件，防止误杀 PID 被复用后的其他进程。
+func TestKillProcessChecksExe(t *testing.T) {
+	simDuration = 5 * time.Second
+	t.Cleanup(func() { simDuration = 120 * time.Second })
+	pid, err := startShell("sleep 5", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exe, _ := os.Readlink("/proc/" + strconv.Itoa(pid) + "/exe")
+	if _, err := killProcess(strconv.Itoa(pid), "/usr/bin/not-this-one"); err == nil || !strings.Contains(err.Error(), "复用") {
+		t.Errorf("mismatched exe: %v", err)
+	}
+	if _, err := killProcess(strconv.Itoa(pid), exe); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if b, _ := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat"); len(b) > 0 && !strings.Contains(string(b), ") Z ") {
+		t.Errorf("process still running: %s", b)
 	}
 }

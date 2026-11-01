@@ -107,7 +107,8 @@ ProtectSystem=strict
 {{- if eq .Kind "agent"}}
 # 除状态目录外只开放攻击模拟自检需要写入的位置（/etc/cron.d 写只含注释的测试文件、/tmp 放测试程序、
 # 网站目录写只含注释的 PHP 文件），其余文件系统保持只读；不需要自检时可删除状态目录以外的各项（自检会显示“不适用”）
-ReadWritePaths=$STATE -/etc/cron.d -/tmp -/var/www -/usr/share/nginx/html -/srv/www
+# /run/xtables.lock：没有 nftables 的老系统用 iptables 封禁 IP 时需要
+ReadWritePaths=$STATE -/etc/cron.d -/tmp -/var/www -/usr/share/nginx/html -/srv/www -/run/xtables.lock
 ProtectHome=read-only
 # 资源上限：不影响主机上的业务
 CPUQuota=20%

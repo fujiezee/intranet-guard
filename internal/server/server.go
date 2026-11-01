@@ -83,6 +83,11 @@ func New(cfg Config, st *store.Store) *Server {
 	s.mux.Handle("GET /api/v1/simulations", viewer(s.listSimulations))
 	s.mux.Handle("POST /api/v1/simulations", admin(s.createSimulations))
 
+	s.mux.Handle("GET /api/v1/actions", viewer(s.listActions))
+	s.mux.Handle("POST /api/v1/actions", admin(s.createAction))
+	s.mux.Handle("POST /api/v1/actions/{id}/approve", admin(s.approveAction))
+	s.mux.Handle("POST /api/v1/actions/{id}/rollback", admin(s.rollbackAction))
+
 	s.mux.Handle("GET /api/v1/agents", viewer(s.listAgents))
 	s.mux.Handle("GET /api/v1/host-events", viewer(s.listHostEvents))
 

@@ -41,6 +41,12 @@ func (s *Server) agentReport(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, err)
 		return
 	}
+	actions, err := s.store.ClaimActions(r.Context(), rep.Agent.ID)
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	cmds = append(cmds, actions...)
 	writeJSON(w, http.StatusOK, model.AgentReportResponse{Commands: cmds})
 }
 

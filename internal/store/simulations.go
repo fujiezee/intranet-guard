@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"safe/internal/model"
@@ -50,6 +51,12 @@ func (s *Store) ClaimSimulations(ctx context.Context, agentID string) ([]model.A
 // 不适用或出错时直接结束该自检。
 func (s *Store) RecordCommandResults(ctx context.Context, agentID string, results []model.CommandResult) error {
 	for _, r := range results {
+		if strings.HasPrefix(r.ID, "act-") {
+			if err := s.recordActionResult(ctx, agentID, r); err != nil {
+				return err
+			}
+			continue
+		}
 		var status model.SimulationStatus
 		switch r.Status {
 		case "not_applicable":

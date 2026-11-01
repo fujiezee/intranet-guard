@@ -33,6 +33,21 @@ step "环境"
 echo "    $(. /etc/os-release && echo "$PRETTY_NAME")，内核 $(uname -r)"
 echo "    sleep：$(readlink -f "$(command -v sleep)")（$(ls -l "$(readlink -f "$(command -v sleep)")" | awk '{print $5}') 字节）"
 
+step "准备隔离测试用的网络命名空间"
+# 隔离主机会切断所有网络，不能在 CI 机器本身上做：在独立的网络命名空间里运行第二个 Agent 来测试。
+# 必须在安装管理中心之前创建，管理中心证书才会包含 10.200.0.1 / 10.200.0.3。
+command -v nft >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y -qq nftables >/dev/null
+ip netns add safeiso
+ip link add veth-safe type veth peer name veth-ns
+ip link set veth-ns netns safeiso
+ip addr add 10.200.0.1/29 dev veth-safe
+ip addr add 10.200.0.3/29 dev veth-safe
+ip link set veth-safe up
+ip netns exec safeiso ip addr add 10.200.0.2/29 dev veth-ns
+ip netns exec safeiso ip link set veth-ns up
+ip netns exec safeiso ip link set lo up
+ok "命名空间 safeiso（10.200.0.2）↔ 主机（10.200.0.1 管理中心，10.200.0.3 普通服务）"
+
 step "一键安装管理中心"
 OUT=$("$BUNDLE/install.sh" 2>&1) || { echo "$OUT"; fail "install.sh 失败"; }
 echo "$OUT" | sed 's/^/    /'
@@ -86,6 +101,62 @@ wait_for "停止 Agent 产生「Agent 被停止」告警，状态为已停止" 2
 	"api GET /alerts | json '[a for a in d if a[\"type\"]==\"agent_stopped\"][0]' && api GET /agents | json '[a for a in d if a[\"id\"]==\"ci-agent\"][0][\"status\"]' | grep -qx stopped"
 systemctl start safe-agent
 wait_for "重新启动后恢复在线" 40 "api GET /agents | json '[a for a in d if a[\"id\"]==\"ci-agent\"][0][\"status\"]' | grep -qx online"
+
+step "处置：封禁 IP"
+action() { api POST /actions "$1" | json 'd["id"]'; }
+action_status() { api GET /actions | json "[a for a in d if a['id']=='$1'][0]['status']"; }
+curl -sk -m 3 --interface 127.0.0.3 -o /dev/null "$CONSOLE/" && ok "封禁前 127.0.0.3 可以访问"
+ID=$(action '{"agent_id":"ci-agent","type":"block_ip","params":{"ip":"127.0.0.3","duration":"600"},"reason":"e2e"}')
+wait_for "封禁完成" 60 "action_status $ID | grep -qx done"
+api GET /actions | json "[a for a in d if a['id']=='$ID'][0]['result']" | sed 's/^/    /'
+! curl -sk -m 3 --interface 127.0.0.3 -o /dev/null "$CONSOLE/" && ok "127.0.0.3 已被封禁" || fail "封禁未生效"
+curl -sk -m 3 -o /dev/null "$CONSOLE/" && ok "其他来源不受影响"
+UNDO=$(api POST "/actions/$ID/rollback" '{"reason":"e2e"}' | json 'd["id"]')
+wait_for "撤销封禁完成" 60 "action_status $UNDO | grep -qx done"
+curl -sk -m 3 --interface 127.0.0.3 -o /dev/null "$CONSOLE/" && ok "解除后 127.0.0.3 恢复访问" || fail "解除未生效"
+[ "$(action_status "$ID")" = rolled_back ] && ok "原封禁动作标记为已撤销"
+
+step "处置：结束进程、隔离文件"
+sleep 600 &
+VICTIM=$!
+EXE=$(readlink /proc/$VICTIM/exe)
+ID=$(action "{\"agent_id\":\"ci-agent\",\"type\":\"kill_process\",\"params\":{\"pid\":\"$VICTIM\",\"exe\":\"$EXE\"},\"reason\":\"e2e\"}")
+wait_for "结束进程完成" 60 "action_status $ID | grep -qx done"
+! kill -0 $VICTIM 2>/dev/null && ok "进程 $VICTIM 已结束" || fail "进程仍在运行"
+echo '<?php @eval($_POST["c"]); ?>' >/var/www/html/evil.php
+ID=$(action '{"agent_id":"ci-agent","type":"quarantine_file","params":{"path":"/var/www/html/evil.php"},"reason":"e2e"}')
+wait_for "隔离文件完成" 60 "action_status $ID | grep -qx done"
+[ ! -e /var/www/html/evil.php ] && [ -f "/var/lib/safe-agent/quarantine/$ID/file" ] && ok "文件已移入隔离区" || fail "文件未隔离"
+UNDO=$(api POST "/actions/$ID/rollback" '{"reason":"e2e"}' | json 'd["id"]')
+wait_for "恢复文件完成" 60 "action_status $UNDO | grep -qx done"
+grep -q eval /var/www/html/evil.php && ok "文件已恢复到原位置" && rm -f /var/www/html/evil.php
+
+step "处置：隔离主机（命名空间中的第二个 Agent，需两人审批）"
+NT=$(api POST /enroll-tokens '{"kind":"agent","max_uses":1,"ttl_hours":1}' | json 'd["token"]')
+mkdir -p /var/lib/safe-agent-ns
+ip netns exec safeiso env SAFE_ENROLL_TOKEN="$NT" /usr/local/bin/safe-agent -server https://10.200.0.1:8443 -id ns-agent \
+	-state /var/lib/safe-agent-ns/state.json -interval 5s -web-dirs "" >/var/log/safe-agent-ns.log 2>&1 &
+NS_AGENT=$!
+wait_for "命名空间中的 Agent 在线" 60 "api GET /agents | json '[a for a in d if a[\"id\"]==\"ns-agent\" and a[\"status\"]==\"online\"][0]'"
+ip netns exec safeiso curl -sk -m 3 -o /dev/null https://10.200.0.3/ && ok "隔离前可以访问 10.200.0.3"
+ID=$(action '{"agent_id":"ns-agent","type":"isolate_host","reason":"e2e"}')
+[ "$(action_status "$ID")" = awaiting_approval ] && ok "隔离主机等待审批"
+api POST "/actions/$ID/approve" >/dev/null 2>&1 && fail "发起人自己批准了" || ok "发起人不能自己批准"
+api POST /users '{"username":"admin2","password":"second-admin-pw","role":"admin"}' >/dev/null
+TOKEN2=$(curl -fsSk -X POST "$CONSOLE/api/v1/auth/login" -d '{"username":"admin2","password":"second-admin-pw"}' | json 'd["token"]')
+curl -fsSk -X POST -H "Authorization: Bearer $TOKEN2" "$CONSOLE/api/v1/actions/$ID/approve" && ok "第二位管理员批准"
+wait_for "隔离完成" 60 "action_status $ID | grep -qx done"
+! ip netns exec safeiso curl -sk -m 3 -o /dev/null https://10.200.0.3/ && ok "隔离后无法访问其他地址" || fail "隔离未生效"
+SEEN1=$(api GET /agents | json '[a for a in d if a["id"]=="ns-agent"][0]["last_seen"]')
+sleep 12
+SEEN2=$(api GET /agents | json '[a for a in d if a["id"]=="ns-agent"][0]["last_seen"]')
+[ "$SEEN1" != "$SEEN2" ] && ok "隔离期间仍与管理中心保持通信（可接收解除指令）" || fail "隔离后 Agent 失联"
+UNDO=$(api POST "/actions/$ID/rollback" '{"reason":"e2e"}' | json 'd["id"]')
+wait_for "解除隔离完成" 60 "action_status $UNDO | grep -qx done"
+ip netns exec safeiso curl -sk -m 3 -o /dev/null https://10.200.0.3/ && ok "解除后恢复访问" || fail "解除隔离未生效"
+kill $NS_AGENT 2>/dev/null || true
+ip netns del safeiso
+ip link del veth-safe 2>/dev/null || true
 
 step "升级"
 OUT=$("$BUNDLE/install.sh" 2>&1) || { echo "$OUT"; fail "升级失败"; }

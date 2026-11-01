@@ -363,12 +363,15 @@ type HoneypotEvent struct {
 
 const AlertHoneypot AlertType = "honeypot"
 
-// AgentCommand 是管理中心随上报回复下发给 Agent 的指令。目前只有攻击模拟自检。
+// AgentCommand 是管理中心随上报回复下发给 Agent 的指令：攻击模拟自检或处置动作。
 type AgentCommand struct {
 	ID       string            `json:"id"`
-	Type     string            `json:"type"` // simulate
-	Scenario string            `json:"scenario"`
+	Type     string            `json:"type"`               // simulate / action
+	Scenario string            `json:"scenario,omitempty"` // simulate
+	Action   string            `json:"action,omitempty"`   // action：处置动作类型
 	Params   map[string]string `json:"params,omitempty"`
+	// ExpiresAt 之后 Agent 拒绝执行，防止网络中断后迟到的处置被执行
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
 }
 
 // CommandResult 是 Agent 执行指令后的结果，在下一次上报时带回。
@@ -408,3 +411,42 @@ const (
 	ResolutionFalsePositive = "false_positive"
 	ResolutionSimulation    = "simulation" // 攻击模拟自检产生，不推送
 )
+
+// 处置动作类型。每个动作都有对应的撤销动作。
+const (
+	ActBlockIP     = "block_ip"
+	ActUnblockIP   = "unblock_ip"
+	ActKillProcess = "kill_process"
+	ActQuarantine  = "quarantine_file"
+	ActRestoreFile = "restore_file"
+	ActIsolate     = "isolate_host"
+	ActRelease     = "release_host"
+)
+
+type ActionStatus string
+
+const (
+	ActAwaitingApproval ActionStatus = "awaiting_approval" // 需要另一位管理员批准
+	ActPending          ActionStatus = "pending"           // 等待 Agent 领取
+	ActSent             ActionStatus = "sent"
+	ActDone             ActionStatus = "done"
+	ActFailed           ActionStatus = "failed"
+	ActExpired          ActionStatus = "expired"     // 超时未领取 / 未批准
+	ActRolledBack       ActionStatus = "rolled_back" // 已被撤销动作抵消
+)
+
+// ResponseAction 是一次处置。
+type ResponseAction struct {
+	ID         string            `json:"id"`
+	AgentID    string            `json:"agent_id"`
+	Type       string            `json:"type"`
+	Params     map[string]string `json:"params"`
+	Reason     string            `json:"reason"`
+	Status     ActionStatus      `json:"status"`
+	Result     string            `json:"result,omitempty"`
+	CreatedBy  string            `json:"created_by"`
+	ApprovedBy string            `json:"approved_by,omitempty"`
+	RollbackOf string            `json:"rollback_of,omitempty"`
+	CreatedAt  time.Time         `json:"created_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
+}

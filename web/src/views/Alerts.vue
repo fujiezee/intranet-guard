@@ -21,7 +21,7 @@
       <el-table-column label="IP" width="140"><template #default="{ row }"><span class="mono">{{ row.ip }}</span></template></el-table-column>
       <el-table-column prop="message" label="内容" min-width="260" />
       <el-table-column label="时间" width="170"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
-      <el-table-column label="处理" width="170">
+      <el-table-column label="处理" width="210">
         <template #default="{ row }">
           <template v-if="row.status === 'acked'">
             <el-tooltip v-if="row.resolution === 'false_positive'" :content="row.resolution_note">
@@ -33,6 +33,7 @@
           <template v-else-if="auth.isAdmin">
             <el-button size="small" @click="ack(row)">确认</el-button>
             <el-button size="small" link @click="falsePositive(row)">误报</el-button>
+            <el-button size="small" link type="danger" @click="respond(row)">处置</el-button>
           </template>
         </template>
       </el-table-column>
@@ -43,11 +44,13 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { ElMessageBox } from 'element-plus'
+import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { auth } from '../auth'
 import { formatTime } from '../format'
 import SeverityTag from '../components/SeverityTag.vue'
 
+const router = useRouter()
 const typeLabels = {
   new_asset: '新主机',
   new_port: '新端口',
@@ -82,6 +85,11 @@ async function load() {
 async function ack(row) {
   await api.ackAlert(row.id)
   load()
+}
+
+// 跳到处置页并带上告警信息，自动匹配告警主机上的 Agent
+function respond(row) {
+  router.push({ path: '/response', query: { ip: row.ip, reason: row.message.slice(0, 300) } })
 }
 
 // 标记误报：原因用于统计误报率、调优或抑制规则

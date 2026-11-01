@@ -11,6 +11,7 @@ const router = createRouter({
     { path: '/honeypot', name: 'honeypot', component: () => import('./views/Honeypot.vue') },
     { path: '/detection', name: 'detection', component: () => import('./views/Detection.vue') },
     { path: '/ids', name: 'ids', component: () => import('./views/IDS.vue') },
+    { path: '/response', name: 'response', component: () => import('./views/Response.vue') },
     { path: '/hosts', name: 'hosts', component: () => import('./views/Hosts.vue') },
     { path: '/tasks', name: 'tasks', component: () => import('./views/Tasks.vue') },
     { path: '/alerts', name: 'alerts', component: () => import('./views/Alerts.vue') },

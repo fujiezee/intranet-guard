@@ -13,6 +13,9 @@ const messages = {
   'cannot remove the last admin': '不能删除最后一个管理员',
   'suppression already exists': '该抑制规则已存在',
   'reason is required when marking a false positive': '标记误报需要填写原因',
+  'an action cannot be approved by the admin who created it': '不能批准自己发起的处置，需要另一位管理员',
+  'reason is required (at most 500 characters)': '请填写处置原因',
+  'only completed block / quarantine / isolate actions can be rolled back, once': '只有已完成的封禁、隔离文件、隔离主机可以撤销，且只能撤销一次',
   'no running honeypot: enable a honeypot on a probe first': '没有运行中的蜜罐：请先在“蜜罐”页为探针启用蜜罐',
 }
 
@@ -57,6 +60,10 @@ export const api = {
   vulns: (filter) => request('GET', `/vulns?${new URLSearchParams(filter)}`),
   setVulnStatus: (id, status) => request('POST', `/vulns/${id}/status`, { status }),
   agents: () => request('GET', '/agents'),
+  actions: () => request('GET', '/actions'),
+  createAction: (a) => request('POST', '/actions', a),
+  approveAction: (id) => request('POST', `/actions/${id}/approve`),
+  rollbackAction: (id, reason) => request('POST', `/actions/${id}/rollback`, { reason }),
   hostEvents: (filter) => request('GET', `/host-events?${new URLSearchParams(filter)}`),
   idsEvents: (filter) => request('GET', `/ids/events?${new URLSearchParams(filter)}`),
   suppressions: () => request('GET', '/ids/suppressions'),

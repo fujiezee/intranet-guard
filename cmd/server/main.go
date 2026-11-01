@@ -259,6 +259,11 @@ func maintenance(ctx context.Context, st *store.Store, taskTimeout time.Duration
 			} else if n > 0 {
 				slog.Warn("attack simulations failed: detection did not fire in time", "count", n)
 			}
+			if n, err := st.ExpireActions(ctx, time.Now()); err != nil {
+				slog.Warn("expire actions", "err", err)
+			} else if n > 0 {
+				slog.Warn("response actions expired", "count", n)
+			}
 		case <-minute.C:
 			if n, err := st.MarkOfflineAgents(ctx, time.Now().Add(-agentOfflineAfter)); err != nil {
 				slog.Warn("mark offline agents", "err", err)

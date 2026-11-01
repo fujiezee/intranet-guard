@@ -27,6 +27,9 @@ var (
 )
 
 func (a *Agent) runCommand(cmd model.AgentCommand) model.CommandResult {
+	if cmd.Type == "action" {
+		return a.runAction(cmd)
+	}
 	res := model.CommandResult{ID: cmd.ID, Status: "done"}
 	if cmd.Type != "simulate" || !simulate.IDPattern.MatchString(cmd.ID) {
 		res.Status, res.Detail = "error", "unsupported command"
