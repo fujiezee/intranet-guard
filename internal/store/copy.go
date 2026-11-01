@@ -12,7 +12,7 @@ var copyTables = []struct {
 	name   string
 	serial bool
 }{
-	{"users", true}, {"sessions", false},
+	{"users", true}, {"sessions", false}, {"api_tokens", true},
 	{"assets", false}, {"ports", false}, {"tasks", false},
 	{"alerts", true}, {"agents", false}, {"host_events", true},
 	{"ids_events", true}, {"ids_suppressions", true},

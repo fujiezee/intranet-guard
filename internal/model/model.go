@@ -547,3 +547,12 @@ type AssetGroup struct {
 	Note      string    `json:"note,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
+
+// APIToken 是外部工具（MCP 等）使用的只读令牌，只保存哈希。
+type APIToken struct {
+	ID         int64      `json:"id"`
+	Name       string     `json:"name"`
+	CreatedBy  string     `json:"created_by"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+}

@@ -327,6 +327,14 @@ CREATE TABLE IF NOT EXISTS agent_upgrades (
 	requested_by TEXT NOT NULL,
 	updated_at   TIMESTAMP NOT NULL
 );
+CREATE TABLE IF NOT EXISTS api_tokens (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	token_hash   TEXT NOT NULL UNIQUE,
+	name         TEXT NOT NULL,
+	created_by   TEXT NOT NULL,
+	created_at   TIMESTAMP NOT NULL,
+	last_used_at TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS sessions (
 	token_hash TEXT PRIMARY KEY,
 	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,

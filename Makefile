@@ -48,4 +48,9 @@ release: web
 		tar -czf $$d.tar.gz -C dist safe-$(VERSION)-linux-$$arch; \
 	done
 	rm -rf dist/downloads
+	@# MCP 程序运行在使用者的电脑上，单独发布
+	for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do \
+		os=$${t%/*}; arch=$${t#*/}; ext=; [ $$os = windows ] && ext=.exe; \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags='-s -w' -o dist/safe-mcp-$(VERSION)-$$os-$$arch$$ext ./cmd/mcp; \
+	done
 	@ls -lh dist/*.tar.gz

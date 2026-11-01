@@ -26,6 +26,7 @@ const (
 	minPasswordLength = 10
 	loginMaxFailures  = 5
 	loginLockout      = 5 * time.Minute
+	apiTokenPrefix    = "safe_ro_"
 )
 
 type ctxKey struct{}
@@ -53,7 +54,20 @@ func (s *Server) requireRole(role model.Role, next http.HandlerFunc) http.Handle
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
-		u, err := s.store.GetSessionUser(r.Context(), hashToken(tok))
+		var u model.User
+		var err error
+		if strings.HasPrefix(tok, apiTokenPrefix) {
+			// API 令牌只读：只能访问只读用户可见的查询接口
+			var name string
+			name, err = s.store.UseAPIToken(r.Context(), hashToken(tok))
+			u = model.User{Username: "token:" + name, Role: model.RoleViewer}
+			if err == nil && r.Method != http.MethodGet {
+				writeError(w, http.StatusForbidden, "forbidden")
+				return
+			}
+		} else {
+			u, err = s.store.GetSessionUser(r.Context(), hashToken(tok))
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusUnauthorized, "unauthorized")
 			return
@@ -320,6 +334,58 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, err)
 	default:
 		s.audit(r, "", "user.delete", strconv.FormatInt(id, 10), "", true)
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func (s *Server) listAPITokens(w http.ResponseWriter, r *http.Request) {
+	tokens, err := s.store.ListAPITokens(r.Context())
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tokens)
+}
+
+// createAPIToken 生成只读令牌。令牌只存哈希，明文只在这次响应中返回。
+func (s *Server) createAPIToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" || len(req.Name) > 64 {
+		writeError(w, http.StatusBadRequest, "name must be 1-64 characters")
+		return
+	}
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	token := apiTokenPrefix + hex.EncodeToString(b)
+	t, err := s.store.CreateAPIToken(r.Context(), req.Name, hashToken(token), userFrom(r.Context()).Username)
+	if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	s.audit(r, "", "api_token.create", strconv.FormatInt(t.ID, 10), "name="+t.Name, true)
+	writeJSON(w, http.StatusCreated, map[string]any{"token": token, "api_token": t})
+}
+
+func (s *Server) deleteAPIToken(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid token id")
+		return
+	}
+	switch err := s.store.DeleteAPIToken(r.Context(), id); {
+	case errors.Is(err, store.ErrNotFound):
+		writeError(w, http.StatusNotFound, "token not found")
+	case err != nil:
+		writeInternal(w, err)
+	default:
+		s.audit(r, "", "api_token.delete", strconv.FormatInt(id, 10), "", true)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

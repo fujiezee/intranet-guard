@@ -143,6 +143,9 @@ func New(cfg Config, st *store.Store) *Server {
 	s.mux.Handle("GET /api/v1/users", admin(s.listUsers))
 	s.mux.Handle("POST /api/v1/users", admin(s.createUser))
 	s.mux.Handle("DELETE /api/v1/users/{id}", admin(s.deleteUser))
+	s.mux.Handle("GET /api/v1/api-tokens", admin(s.listAPITokens))
+	s.mux.Handle("POST /api/v1/api-tokens", admin(s.createAPIToken))
+	s.mux.Handle("DELETE /api/v1/api-tokens/{id}", admin(s.deleteAPIToken))
 
 	s.mux.Handle("GET /api/v1/nodes", admin(s.listNodes))
 	s.mux.Handle("GET /api/v1/install-info", admin(s.installInfoHandler))

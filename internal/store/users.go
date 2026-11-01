@@ -144,3 +144,60 @@ func (s *Store) DeleteExpiredSessions(ctx context.Context) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE expires_at <= ?`, time.Now().Unix())
 	return err
 }
+
+func (s *Store) CreateAPIToken(ctx context.Context, name, tokenHash, createdBy string) (model.APIToken, error) {
+	t := model.APIToken{Name: name, CreatedBy: createdBy, CreatedAt: time.Now().UTC()}
+	err := s.db.QueryRowContext(ctx, `INSERT INTO api_tokens (token_hash, name, created_by, created_at) VALUES (?, ?, ?, ?) RETURNING id`,
+		tokenHash, name, createdBy, t.CreatedAt).Scan(&t.ID)
+	return t, err
+}
+
+func (s *Store) ListAPITokens(ctx context.Context) ([]model.APIToken, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, created_by, created_at, last_used_at FROM api_tokens ORDER BY id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.APIToken{}
+	for rows.Next() {
+		var t model.APIToken
+		var used sql.NullTime
+		if err := rows.Scan(&t.ID, &t.Name, &t.CreatedBy, &t.CreatedAt, &used); err != nil {
+			return nil, err
+		}
+		if used.Valid {
+			t.LastUsedAt = &used.Time
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteAPIToken(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM api_tokens WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// UseAPIToken 返回令牌名称并记录使用时间（每分钟最多写一次，查询频繁时不产生大量写入）。
+func (s *Store) UseAPIToken(ctx context.Context, tokenHash string) (string, error) {
+	var name string
+	var used sql.NullTime
+	err := s.db.QueryRowContext(ctx, `SELECT name, last_used_at FROM api_tokens WHERE token_hash = ?`, tokenHash).Scan(&name, &used)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	} else if err != nil {
+		return "", err
+	}
+	if now := time.Now().UTC(); !used.Valid || now.Sub(used.Time) > time.Minute {
+		if _, err := s.db.ExecContext(ctx, `UPDATE api_tokens SET last_used_at = ? WHERE token_hash = ?`, now, tokenHash); err != nil {
+			return "", err
+		}
+	}
+	return name, nil
+}
