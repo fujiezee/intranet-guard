@@ -23,6 +23,9 @@ const (
 	FileTamper        = "fim"
 	SuspiciousProcess = "process"
 	HoneypotAccess    = "honeypot"
+	ReverseShell      = "reverse_shell"
+	DownloadExec      = "download_exec"
+	WebshellDrop      = "webshell"
 )
 
 // Scenarios 按展示顺序排列。超时时间覆盖 Agent 默认 30 秒的采集周期两轮以上。
@@ -33,6 +36,12 @@ var Scenarios = []Scenario{
 		model.AlertSuspiciousProcess, 150 * time.Second},
 	{HoneypotAccess, "访问蜜罐", "从该主机连接一个已启用的蜜罐端口（模拟失陷主机在内网探测）",
 		model.AlertHoneypot, 90 * time.Second},
+	{ReverseShell, "反弹 shell", "启动一个 shell，其输入输出连接到 Agent 在本机建立的 TCP 连接（不连接外部、不执行任何命令），2 分钟后结束",
+		model.AlertSuspiciousCommand, 150 * time.Second},
+	{DownloadExec, "下载并执行", "执行一条包含 \"curl … | sh\" 字样的命令，实际为空操作（不下载、不执行），2 分钟后结束",
+		model.AlertSuspiciousCommand, 150 * time.Second},
+	{WebshellDrop, "Webshell 落地", "在网站目录写入一个只含注释的 PHP 文件（无任何代码），2 分钟后删除",
+		model.AlertWebshell, 150 * time.Second},
 }
 
 func Get(id string) (Scenario, bool) {

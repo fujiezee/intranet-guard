@@ -117,6 +117,9 @@ const (
 	EventSudo              HostEventType = "sudo"
 	EventFileChanged       HostEventType = "file_changed"
 	EventSuspiciousProcess HostEventType = "suspicious_process"
+	EventCommand           HostEventType = "command"            // 交互式会话中执行的命令（审计，不告警）
+	EventSuspiciousCommand HostEventType = "suspicious_command" // 命中命令检测规则
+	EventWebshell          HostEventType = "webshell"           // 网站目录脚本文件新增 / 修改
 )
 
 // HostEvent 是主机 Agent 采集到的一条审计事件。
@@ -129,6 +132,8 @@ type HostEvent struct {
 	SrcIP   string        `json:"src_ip,omitempty"`
 	Path    string        `json:"path,omitempty"`
 	Detail  string        `json:"detail,omitempty"`
+	// Severity 是 Agent 侧规则给出的级别（high / medium），只用于生成告警，不持久化。
+	Severity string `json:"severity,omitempty"`
 }
 
 type AgentStatus string
@@ -136,16 +141,20 @@ type AgentStatus string
 const (
 	AgentOnline  AgentStatus = "online"
 	AgentOffline AgentStatus = "offline"
+	AgentStopped AgentStatus = "stopped" // 收到停止信号后主动告知（关机、systemctl stop 等）
 )
 
 type AgentInfo struct {
-	ID       string      `json:"id"`
-	Hostname string      `json:"hostname"`
-	OS       string      `json:"os"`
-	Version  string      `json:"version"`
-	IPs      []string    `json:"ips"`
-	Status   AgentStatus `json:"status,omitempty"`
-	LastSeen time.Time   `json:"last_seen,omitempty"`
+	ID       string   `json:"id"`
+	Hostname string   `json:"hostname"`
+	OS       string   `json:"os"`
+	Version  string   `json:"version"`
+	IPs      []string `json:"ips"`
+	// Capabilities 是本机实际生效的采集能力（如 exec_monitor），便于在控制台发现降级运行
+	Capabilities []string    `json:"capabilities,omitempty"`
+	Stopping     bool        `json:"stopping,omitempty"` // 本次上报是停止前的最后一次
+	Status       AgentStatus `json:"status,omitempty"`
+	LastSeen     time.Time   `json:"last_seen,omitempty"`
 }
 
 // AgentReport 是 Agent 定期上报的心跳 + 事件批次。
@@ -167,6 +176,10 @@ const (
 	AlertFileChanged       AlertType = "file_changed"
 	AlertSuspiciousProcess AlertType = "suspicious_process"
 	AlertAgentOffline      AlertType = "agent_offline"
+	AlertAgentStopped      AlertType = "agent_stopped"
+	AlertSuspiciousCommand AlertType = "suspicious_command"
+	AlertWebshell          AlertType = "webshell"
+	AlertLateralMovement   AlertType = "lateral_movement"
 )
 
 // IDSEvent 是探针从 Suricata 告警中归一化出的流量检测事件。

@@ -10,7 +10,7 @@
       <el-table v-else :data="agents" size="small" @row-click="(row) => selectAgent(row.id)" row-class-name="clickable">
         <el-table-column label="状态" width="80">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.status === 'online' ? 'success' : 'danger'">{{ row.status === 'online' ? '在线' : '离线' }}</el-tag>
+            <el-tag size="small" :type="statusMap[row.status]?.type">{{ statusMap[row.status]?.label || row.status }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="id" label="Agent ID" min-width="140" />
@@ -19,6 +19,15 @@
         </el-table-column>
         <el-table-column prop="os" label="系统" width="120" />
         <el-table-column prop="version" label="版本" width="80" />
+        <el-table-column label="采集能力" min-width="220">
+          <template #default="{ row }">
+            <el-tag v-for="c in row.capabilities || []" :key="c" size="small" type="info" class="cap">{{ capLabels[c] || c }}</el-tag>
+            <el-tooltip v-if="row.os?.startsWith('linux') && !(row.capabilities || []).includes('exec_monitor')"
+              content="命令审计未启用：Agent 需要在 Linux 上以 root 运行">
+              <el-tag size="small" type="warning" class="cap">无命令审计</el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
         <el-table-column label="最后心跳" width="170"><template #default="{ row }">{{ formatTime(row.last_seen) }}</template></el-table-column>
       </el-table>
     </el-card>
@@ -63,10 +72,28 @@ const eventLabels = {
   login_success: '登录成功',
   login_failed: '登录失败',
   sudo: 'sudo',
+  command: '命令',
+  suspicious_command: '可疑命令',
   file_changed: '文件变更',
+  webshell: 'Webshell',
   suspicious_process: '可疑进程',
 }
-const eventTagType = { login_success: 'success', login_failed: 'warning', sudo: 'info', file_changed: 'danger', suspicious_process: 'danger' }
+const eventTagType = {
+  login_success: 'success',
+  login_failed: 'warning',
+  sudo: 'info',
+  command: 'info',
+  suspicious_command: 'danger',
+  file_changed: 'danger',
+  webshell: 'danger',
+  suspicious_process: 'danger',
+}
+const statusMap = {
+  online: { label: '在线', type: 'success' },
+  offline: { label: '离线', type: 'danger' },
+  stopped: { label: '已停止', type: 'warning' },
+}
+const capLabels = { auth_log: '登录审计', fim: '文件完整性', webshell: 'Webshell', process_scan: '进程扫描', exec_monitor: '命令审计' }
 
 const agents = ref([])
 const events = ref([])
@@ -99,6 +126,7 @@ onMounted(load)
 
 <style scoped>
 .filters { display: flex; align-items: center; gap: 8px; }
+.cap { margin: 2px 4px 2px 0; }
 .filters > span { margin-right: 8px; font-weight: 500; }
 :deep(.clickable) { cursor: pointer; }
 </style>

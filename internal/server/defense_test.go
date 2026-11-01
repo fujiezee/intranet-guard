@@ -215,7 +215,8 @@ func TestHoneypotAndSimulation(t *testing.T) {
 func TestCatalogCoversAllAlertTypes(t *testing.T) {
 	types := []model.AlertType{model.AlertNewAsset, model.AlertNewPort, model.AlertRiskyPort, model.AlertSSHBruteForce,
 		model.AlertBruteForceSuccess, model.AlertRootLogin, model.AlertFileChanged, model.AlertSuspiciousProcess,
-		model.AlertAgentOffline, model.AlertIDS, model.AlertVuln, model.AlertHoneypot}
+		model.AlertAgentOffline, model.AlertIDS, model.AlertVuln, model.AlertHoneypot,
+		model.AlertSuspiciousCommand, model.AlertWebshell, model.AlertLateralMovement, model.AlertAgentStopped}
 	have := map[model.AlertType]bool{}
 	for _, r := range alert.Catalog {
 		have[r.ID] = true

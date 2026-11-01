@@ -61,6 +61,10 @@ const typeLabels = {
   ids: '入侵检测',
   vuln: '漏洞',
   honeypot: '蜜罐',
+  suspicious_command: '可疑命令',
+  webshell: 'Webshell',
+  lateral_movement: '横向移动',
+  agent_stopped: 'Agent 停止',
 }
 const alerts = ref([])
 const loading = ref(false)

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"safe/internal/model"
@@ -33,6 +34,7 @@ type Config struct {
 	StatePath string
 	Interval  time.Duration
 	FIMPaths  []string
+	WebDirs   []string // Webshell 监控的网站目录
 }
 
 // State 持久化到磁盘，Agent 重启后从上次位置继续，不重复上报也不漏报。
@@ -41,6 +43,7 @@ type State struct {
 	JournalCursor string              `json:"journal_cursor,omitempty"`
 	Files         map[string]FileInfo `json:"files,omitempty"`
 	Processes     map[string]bool     `json:"processes,omitempty"`
+	WebFiles      map[string]FileInfo `json:"web_files,omitempty"`
 }
 
 type Agent struct {
@@ -49,6 +52,11 @@ type Agent struct {
 	state   State
 	http    *http.Client
 	results []model.CommandResult // 指令执行结果，随下一次上报带回
+
+	execMu      sync.Mutex
+	execEvents  []model.HostEvent    // 进程监控产生、尚未上报的事件
+	execDropped int                  // 缓冲区满时丢弃的数量
+	execSeen    map[string]time.Time // 相同规则 + 命令 60 秒内只上报一次
 }
 
 func New(cfg Config) (*Agent, error) {
@@ -72,16 +80,111 @@ func New(cfg Config) (*Agent, error) {
 
 func (a *Agent) Run(ctx context.Context) {
 	slog.Info("safe-agent started", "id", a.cfg.AgentID, "server", a.cfg.ServerURL, "version", Version)
+	a.info.Capabilities = []string{"auth_log", "fim", "webshell"}
+	if runtime.GOOS == "linux" {
+		a.info.Capabilities = append(a.info.Capabilities, "process_scan")
+	}
+	monCtx, stopMon := context.WithCancel(context.Background())
+	defer stopMon()
+	if err := startProcMonitor(monCtx, a.onExec); err != nil {
+		slog.Warn("command auditing disabled", "err", err)
+	} else {
+		a.info.Capabilities = append(a.info.Capabilities, "exec_monitor")
+		slog.Info("command auditing enabled (proc connector)")
+	}
+
 	t := time.NewTicker(a.cfg.Interval)
 	defer t.Stop()
 	for {
 		a.cycle(ctx)
 		select {
 		case <-ctx.Done():
+			a.notifyStopping()
 			return
 		case <-t.C:
 		}
 	}
+}
+
+// notifyStopping 在收到停止信号（systemctl stop、关机）时告知管理中心，与"失联"区分开。
+func (a *Agent) notifyStopping() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	info := a.info
+	info.Stopping = true
+	if _, err := a.send(ctx, model.AgentReport{Agent: info, Events: a.takeExecEvents(), Results: a.results}); err != nil {
+		slog.Warn("notify stopping", "err", err)
+	}
+}
+
+const maxExecBuffer = 5000
+
+// onExec 处理进程监控推送的每次执行：命中规则的上报为可疑命令，交互式终端中的命令作为审计记录。
+func (a *Agent) onExec(e ExecInfo) {
+	findings := EvaluateExec(e)
+	if len(findings) == 0 && !e.TTY {
+		return
+	}
+	now := time.Now()
+	var events []model.HostEvent
+	for _, f := range findings {
+		detail := fmt.Sprintf("[%s] %s；命令：%s；父进程：%s", f.Name, f.Reason, e.Cmdline, e.ParentComm)
+		events = append(events, model.HostEvent{Type: model.EventSuspiciousCommand, Time: now, User: e.User,
+			SrcIP: hostOf(e.StdioRemote), Path: e.Exe, Detail: detail, Severity: f.Severity})
+	}
+	if len(findings) == 0 {
+		events = append(events, model.HostEvent{Type: model.EventCommand, Time: now, User: e.User, Path: e.Exe,
+			Detail: e.Cmdline + "（父进程 " + e.ParentComm + "）"})
+	}
+
+	a.execMu.Lock()
+	defer a.execMu.Unlock()
+	if a.execSeen == nil || len(a.execSeen) > 10000 {
+		a.execSeen = map[string]time.Time{}
+	}
+	for _, ev := range events {
+		key := string(ev.Type) + "|" + ev.Detail
+		if t, ok := a.execSeen[key]; ok && now.Sub(t) < time.Minute {
+			continue // 循环脚本反复执行同一命令时只报一次
+		}
+		a.execSeen[key] = now
+		if len(a.execEvents) >= maxExecBuffer {
+			a.execDropped++
+			continue
+		}
+		a.execEvents = append(a.execEvents, ev)
+	}
+}
+
+func (a *Agent) takeExecEvents() []model.HostEvent {
+	a.execMu.Lock()
+	defer a.execMu.Unlock()
+	ev := a.execEvents
+	a.execEvents = nil
+	if a.execDropped > 0 {
+		ev = append(ev, model.HostEvent{Type: model.EventCommand, Time: time.Now(),
+			Detail: fmt.Sprintf("命令审计缓冲区已满，丢弃 %d 条记录（上报不畅或命令执行过于频繁）", a.execDropped)})
+		a.execDropped = 0
+	}
+	return ev
+}
+
+// putBackExecEvents 在上报失败时把事件放回缓冲区，下次重试。
+func (a *Agent) putBackExecEvents(ev []model.HostEvent) {
+	a.execMu.Lock()
+	defer a.execMu.Unlock()
+	a.execEvents = append(ev, a.execEvents...)
+	if over := len(a.execEvents) - maxExecBuffer; over > 0 {
+		a.execEvents = a.execEvents[over:]
+		a.execDropped += over
+	}
+}
+
+func hostOf(addr string) string {
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
+	}
+	return ""
 }
 
 // cycle 采集一轮事件并上报；只有上报成功才提交新状态，失败时下一轮重新采集同一批数据。
@@ -102,6 +205,12 @@ func (a *Agent) cycle(ctx context.Context) {
 	}
 	next.Files = files
 
+	webFiles := scanWebDirs(a.cfg.WebDirs)
+	if a.state.WebFiles != nil { // 首次运行只建立基线
+		events = append(events, diffWebFiles(a.state.WebFiles, webFiles, now)...)
+	}
+	next.WebFiles = webFiles
+
 	next.Processes = map[string]bool{}
 	for key, ev := range ScanProcesses(now) {
 		if !a.state.Processes[key] {
@@ -110,6 +219,9 @@ func (a *Agent) cycle(ctx context.Context) {
 		next.Processes[key] = true
 	}
 
+	execEvents := a.takeExecEvents()
+	events = append(events, execEvents...)
+
 	a.info.IPs = localIPs()
 	if events == nil {
 		events = []model.HostEvent{}
@@ -117,6 +229,7 @@ func (a *Agent) cycle(ctx context.Context) {
 	cmds, err := a.send(ctx, model.AgentReport{Agent: a.info, Events: events, Results: a.results})
 	if err != nil {
 		slog.Warn("report failed, will retry", "events", len(events), "err", err)
+		a.putBackExecEvents(execEvents)
 		return
 	}
 	a.results = nil

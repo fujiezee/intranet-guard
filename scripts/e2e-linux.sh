@@ -45,12 +45,15 @@ TOKEN=$(curl -fsSk -X POST "$CONSOLE/api/v1/auth/login" -d "{\"username\":\"admi
 PIN=$(api GET /install-info | json 'd["pin"]')
 
 step "一行命令安装 Agent 和探针"
+mkdir -p /var/www/html # 让 Webshell 监控和自检有网站目录可用
 AT=$(api POST /enroll-tokens '{"kind":"agent","max_uses":1,"ttl_hours":1}' | json 'd["token"]')
 PT=$(api POST /enroll-tokens '{"kind":"probe","max_uses":1,"ttl_hours":1}' | json 'd["token"]')
 curl -fsSLk --pinnedpubkey "$PIN" "$NODE/install/agent.sh" | SAFE_ENROLL_TOKEN="$AT" SAFE_AGENT_ID=ci-agent sh
 curl -fsSLk --pinnedpubkey "$PIN" "$NODE/install/probe.sh" | SAFE_ENROLL_TOKEN="$PT" SAFE_PROBE_ID=ci-probe sh
 wait_for "Agent 在线" 60 "api GET /agents | json '[a for a in d if a[\"id\"]==\"ci-agent\" and a[\"status\"]==\"online\"][0]'"
 [ ! -s /etc/safe-agent.env ] && ok "注册后令牌已从节点配置中删除"
+api GET /agents | json '[a for a in d if a["id"]=="ci-agent"][0]["capabilities"]' | grep -q exec_monitor && ok "命令审计已启用（进程连接器）" || fail "命令审计未启用"
+[ "$(systemctl show -p CPUQuotaPerSecUSec --value safe-agent)" = 200ms ] && ok "Agent 资源上限生效（CPU 20%）" || fail "Agent CPU 上限未生效"
 
 step "扫描"
 TASK=$(api POST /tasks '{"probe_id":"ci-probe","targets":["127.0.0.1"],"ports":[443,8443]}' | json 'd["id"]')
@@ -69,13 +72,20 @@ sleep 5
 [ "$(api GET /honeypot-events | json 'len([e for e in d if e["src_ip"]=="127.0.0.1"])')" = 0 ] && ok "探针本机地址的访问不告警"
 
 step "攻击模拟自检"
-api POST /simulations '{"agent_id":"ci-agent","scenarios":["fim","process","honeypot"]}' >/dev/null
+api POST /simulations '{"agent_id":"ci-agent","scenarios":["fim","process","honeypot","reverse_shell","download_exec","webshell"]}' >/dev/null
 wait_for "自检全部结束" 240 "api GET /simulations | json 'all(s[\"status\"] not in (\"pending\",\"running\") for s in d)' | grep -qx True"
 api GET /simulations | json '"\n".join("    %s %-9s %s %s" % (s["scenario"], s["status"], s.get("latency_ms",0), s.get("detail","")) for s in d)'
-[ "$(api GET /simulations | json 'sum(s["status"]=="passed" for s in d)')" = 3 ] || fail "自检未全部通过"
-ok "文件篡改、临时目录执行、访问蜜罐 3 个场景全部检出"
-wait_for "自检产物已自动清理" 150 "! ls /etc/cron.d/safe-simulation-* /tmp/safe-sim-* 2>/dev/null | grep -q ."
+[ "$(api GET /simulations | json 'sum(s["status"]=="passed" for s in d)')" = 6 ] || fail "自检未全部通过"
+ok "文件篡改、临时目录执行、访问蜜罐、反弹 shell、下载并执行、Webshell 6 个场景全部检出"
+wait_for "自检产物已自动清理" 150 "! ls /etc/cron.d/safe-simulation-* /tmp/safe-sim-* /var/www/html/safe-sim-* 2>/dev/null | grep -q ."
 [ "$(api GET '/alerts?status=open' | json 'len([a for a in d if "sim-" in a["message"]])')" = 0 ] && ok "自检告警已自动关闭"
+
+step "Agent 停止"
+systemctl stop safe-agent
+wait_for "停止 Agent 产生「Agent 被停止」告警，状态为已停止" 20 \
+	"api GET /alerts | json '[a for a in d if a[\"type\"]==\"agent_stopped\"][0]' && api GET /agents | json '[a for a in d if a[\"id\"]==\"ci-agent\"][0][\"status\"]' | grep -qx stopped"
+systemctl start safe-agent
+wait_for "重新启动后恢复在线" 40 "api GET /agents | json '[a for a in d if a[\"id\"]==\"ci-agent\"][0][\"status\"]' | grep -qx online"
 
 step "升级"
 OUT=$("$BUNDLE/install.sh" 2>&1) || { echo "$OUT"; fail "升级失败"; }

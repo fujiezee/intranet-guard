@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/netip"
+	"strings"
 	"time"
 
 	"safe/internal/alert"
@@ -45,12 +47,19 @@ func (s *Store) SaveAgentReport(ctx context.Context, rep model.AgentReport) erro
 
 	now := time.Now().UTC()
 	ips, _ := json.Marshal(a.IPs)
+	status := model.AgentOnline
+	if a.Stopping {
+		status = model.AgentStopped // 不再参与离线检测，避免关机后再报一次"离线"
+	}
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO agents (id, hostname, os, version, ips, status, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO agents (id, hostname, os, version, ips, capabilities, status, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET hostname = excluded.hostname, os = excluded.os, version = excluded.version,
-			ips = excluded.ips, status = excluded.status, last_seen = excluded.last_seen`,
-		a.ID, a.Hostname, a.OS, a.Version, string(ips), model.AgentOnline, now.UnixMilli()); err != nil {
+			ips = excluded.ips, capabilities = excluded.capabilities, status = excluded.status, last_seen = excluded.last_seen`,
+		a.ID, a.Hostname, a.OS, a.Version, string(ips), strings.Join(a.Capabilities, ","), status, now.UnixMilli()); err != nil {
 		return err
+	}
+	if a.Stopping {
+		alerts = append(alerts, alert.AgentStopped(hostIP, a.ID))
 	}
 
 	for _, al := range alerts {
@@ -103,11 +112,25 @@ func (s *Store) detectHostAlerts(ctx context.Context, hostIP, agentID string, ev
 				if n >= alert.BruteForceThreshold {
 					alerts = append(alerts, alert.BruteForceSuccess(hostIP, agentID, ev))
 				}
+				if a, err := netip.ParseAddr(ev.SrcIP); err == nil && (a.IsPrivate() || a.IsLoopback()) {
+					// 内网来源：短时间登录多台主机即横向移动（跳板机等合法场景可标记误报）
+					targets, err := s.events.CountLoginTargets(ctx, ev.SrcIP, ev.Time.Add(-alert.LateralWindow), ev.Time)
+					if err != nil {
+						return nil, err
+					}
+					if targets >= alert.LateralTargets {
+						alerts = append(alerts, alert.LateralMovement(ev.SrcIP, ev.User, targets))
+					}
+				}
 			}
 		case model.EventFileChanged:
 			alerts = append(alerts, alert.FileChanged(hostIP, agentID, ev))
 		case model.EventSuspiciousProcess:
 			alerts = append(alerts, alert.SuspiciousProcess(hostIP, agentID, ev))
+		case model.EventSuspiciousCommand:
+			alerts = append(alerts, alert.SuspiciousCommand(hostIP, agentID, ev))
+		case model.EventWebshell:
+			alerts = append(alerts, alert.Webshell(hostIP, agentID, ev))
 		}
 	}
 	for src, last := range latestFailure {
@@ -183,7 +206,7 @@ func (s *Store) MarkOfflineAgents(ctx context.Context, cutoff time.Time) (int, e
 }
 
 func (s *Store) ListAgents(ctx context.Context) ([]model.AgentInfo, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, hostname, os, version, ips, status, last_seen FROM agents ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, hostname, os, version, ips, capabilities, status, last_seen FROM agents ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -191,12 +214,15 @@ func (s *Store) ListAgents(ctx context.Context) ([]model.AgentInfo, error) {
 	agents := []model.AgentInfo{}
 	for rows.Next() {
 		var a model.AgentInfo
-		var ips string
+		var ips, caps string
 		var lastSeen int64
-		if err := rows.Scan(&a.ID, &a.Hostname, &a.OS, &a.Version, &ips, &a.Status, &lastSeen); err != nil {
+		if err := rows.Scan(&a.ID, &a.Hostname, &a.OS, &a.Version, &ips, &caps, &a.Status, &lastSeen); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal([]byte(ips), &a.IPs)
+		if caps != "" {
+			a.Capabilities = strings.Split(caps, ",")
+		}
 		a.LastSeen = time.UnixMilli(lastSeen).UTC()
 		agents = append(agents, a)
 	}

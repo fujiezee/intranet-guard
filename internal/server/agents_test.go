@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -108,5 +110,110 @@ func TestAgentDetections(t *testing.T) {
 	call(t, ts, adminToken, "GET", "/api/v1/agents", nil, &agents)
 	if agents[0].Status != model.AgentOnline {
 		t.Errorf("agent not back online: %+v", agents[0])
+	}
+}
+
+func TestV03Detections(t *testing.T) {
+	ts, adminToken, st := newTestServerWithStore(t)
+	report := func(id string, ip string, stopping bool, events ...model.HostEvent) {
+		t.Helper()
+		if events == nil {
+			events = []model.HostEvent{}
+		}
+		rep := model.AgentReport{Agent: model.AgentInfo{ID: id, Hostname: id, IPs: []string{ip}, Stopping: stopping,
+			Capabilities: []string{"exec_monitor", "fim"}}, Events: events}
+		if code := call(t, ts, agentToken, "POST", "/api/v1/agent/report", rep, nil); code != http.StatusOK {
+			t.Fatalf("report: %d", code)
+		}
+	}
+	alertsOf := func(typ model.AlertType) []model.Alert {
+		var all, out []model.Alert
+		call(t, ts, adminToken, "GET", "/api/v1/alerts", nil, &all)
+		for _, a := range all {
+			if a.Type == typ {
+				out = append(out, a)
+			}
+		}
+		return out
+	}
+	now := time.Now()
+
+	// 可疑命令：级别取自 Agent 规则；反弹 shell 带出对端地址；相同命令去重。
+	cmd := model.HostEvent{Type: model.EventSuspiciousCommand, Time: now, User: "www-data", SrcIP: "10.6.6.6",
+		Path: "/usr/bin/dash", Severity: "high", Detail: "[反弹 shell] shell 的标准输入输出连接到网络 10.6.6.6:4444；命令：sh -i；父进程：php-fpm8.3"}
+	report("web01", "10.0.0.21", false, cmd, cmd)
+	report("web01", "10.0.0.21", false, cmd)
+	if a := alertsOf(model.AlertSuspiciousCommand); len(a) != 1 || a[0].Severity != model.SeverityHigh ||
+		!strings.Contains(a[0].Message, "连接对端 10.6.6.6") || a[0].IP != "10.0.0.21" {
+		t.Errorf("suspicious command alerts: %+v", a)
+	}
+	// 交互式命令只记录，不告警。
+	report("web01", "10.0.0.21", false, model.HostEvent{Type: model.EventCommand, Time: now, User: "ops", Detail: "ls -la（父进程 bash）"})
+	var events []model.HostEvent
+	call(t, ts, adminToken, "GET", "/api/v1/host-events?type=command", nil, &events)
+	if len(events) != 1 {
+		t.Errorf("command audit events: %+v", events)
+	}
+
+	// Webshell：有特征为高危，无特征为中危。
+	report("web01", "10.0.0.21", false,
+		model.HostEvent{Type: model.EventWebshell, Time: now, Path: "/var/www/html/up/x.php", Detail: "新增脚本文件，含 Webshell 特征：eval", Severity: "high"},
+		model.HostEvent{Type: model.EventWebshell, Time: now, Path: "/var/www/html/about.php", Detail: "新增脚本文件", Severity: "medium"})
+	sev := map[model.Severity]int{}
+	for _, a := range alertsOf(model.AlertWebshell) {
+		sev[a.Severity]++
+	}
+	if sev[model.SeverityHigh] != 1 || sev[model.SeverityMedium] != 1 {
+		t.Errorf("webshell severities: %v", sev)
+	}
+
+	// 横向移动：同一内网来源 10 分钟内登录第 5 台主机时告警，关联到来源；外网来源不按此规则判断。
+	login := func(src string) model.HostEvent {
+		return model.HostEvent{Type: model.EventLoginSuccess, Time: now, User: "root", SrcIP: src, Detail: "ssh password"}
+	}
+	for i := 1; i <= 4; i++ {
+		report(fmt.Sprintf("db%02d", i), fmt.Sprintf("10.0.1.%d", i), false, login("10.0.0.99"))
+	}
+	if n := len(alertsOf(model.AlertLateralMovement)); n != 0 {
+		t.Fatalf("lateral alert at 4 hosts")
+	}
+	report("db05", "10.0.1.5", false, login("10.0.0.99"))
+	report("db06", "10.0.1.6", false, login("10.0.0.99"))
+	if a := alertsOf(model.AlertLateralMovement); len(a) != 1 || a[0].IP != "10.0.0.99" || !strings.Contains(a[0].Message, "5 台") {
+		t.Errorf("lateral alerts: %+v", a)
+	}
+	for i := 1; i <= 6; i++ {
+		report(fmt.Sprintf("ext%02d", i), fmt.Sprintf("10.0.2.%d", i), false, login("203.0.113.9"))
+	}
+	for _, a := range alertsOf(model.AlertLateralMovement) {
+		if a.IP == "203.0.113.9" {
+			t.Errorf("external source treated as lateral movement: %+v", a)
+		}
+	}
+
+	// Agent 停止：状态为 stopped 并告警；之后不再触发离线告警；恢复上报后重新在线。
+	report("web01", "10.0.0.21", true)
+	var agents []model.AgentInfo
+	call(t, ts, adminToken, "GET", "/api/v1/agents", nil, &agents)
+	for _, a := range agents {
+		if a.ID == "web01" && (a.Status != model.AgentStopped || len(a.Capabilities) != 2) {
+			t.Errorf("stopped agent: %+v", a)
+		}
+	}
+	if len(alertsOf(model.AlertAgentStopped)) != 1 {
+		t.Errorf("agent stopped alert missing")
+	}
+	st.MarkOfflineAgents(context.Background(), time.Now().Add(time.Hour))
+	for _, a := range alertsOf(model.AlertAgentOffline) {
+		if strings.Contains(a.Message, "web01") {
+			t.Errorf("stopped agent also reported offline: %+v", a)
+		}
+	}
+	report("web01", "10.0.0.21", false)
+	call(t, ts, adminToken, "GET", "/api/v1/agents", nil, &agents)
+	for _, a := range agents {
+		if a.ID == "web01" && a.Status != model.AgentOnline {
+			t.Errorf("agent not back online: %+v", a)
+		}
 	}
 }

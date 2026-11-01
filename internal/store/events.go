@@ -12,6 +12,8 @@ import (
 type EventStore interface {
 	InsertHostEvents(ctx context.Context, agentID string, events []model.HostEvent) error
 	CountLoginFailures(ctx context.Context, agentID, srcIP string, from, to time.Time) (int, error)
+	// CountLoginTargets 返回某来源在时间范围内成功登录过的不同主机数。
+	CountLoginTargets(ctx context.Context, srcIP string, from, to time.Time) (int, error)
 	ListHostEvents(ctx context.Context, f EventFilter) ([]model.HostEvent, error)
 	InsertIDSEvents(ctx context.Context, probeID string, events []model.IDSEvent) error
 	ListIDSEvents(ctx context.Context, f IDSFilter) ([]model.IDSEvent, error)
@@ -78,6 +80,14 @@ func (e *sqlEvents) CountLoginFailures(ctx context.Context, agentID, srcIP strin
 		SELECT COUNT(*) FROM host_events
 		WHERE agent_id = ? AND type = ? AND src_ip = ? AND ts BETWEEN ? AND ?`,
 		agentID, model.EventLoginFailed, srcIP, from.UnixMilli(), to.UnixMilli()).Scan(&n)
+	return n, err
+}
+
+func (e *sqlEvents) CountLoginTargets(ctx context.Context, srcIP string, from, to time.Time) (int, error) {
+	var n int
+	err := e.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT agent_id) FROM host_events WHERE type = ? AND src_ip = ? AND ts BETWEEN ? AND ?`,
+		model.EventLoginSuccess, srcIP, from.UnixMilli(), to.UnixMilli()).Scan(&n)
 	return n, err
 }
 

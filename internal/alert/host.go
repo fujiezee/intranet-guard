@@ -1,6 +1,8 @@
 package alert
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -118,4 +120,61 @@ func Honeypot(probeID string, ev model.HoneypotEvent) DedupAlert {
 		Alert:    model.Alert{Type: model.AlertHoneypot, Severity: model.SeverityHigh, IP: ev.SrcIP, Port: ev.Port, Message: msg},
 		DedupKey: key,
 	}
+}
+
+const (
+	// LateralTargets 台及以上主机在 LateralWindow 内被同一来源登录，判定为横向移动。
+	LateralTargets = 5
+	LateralWindow  = 10 * time.Minute
+)
+
+func severityOf(s string) model.Severity {
+	if s == "high" {
+		return model.SeverityHigh
+	}
+	return model.SeverityMedium
+}
+
+// SuspiciousCommand 为命中命令检测规则的执行生成告警。相同主机上相同的命令 30 分钟内只告警一次。
+func SuspiciousCommand(hostIP, agentID string, ev model.HostEvent) DedupAlert {
+	msg := fmt.Sprintf("%s (%s) 可疑命令，用户 %s：%s", hostIP, agentID, ev.User, ev.Detail)
+	if ev.SrcIP != "" {
+		msg += "；连接对端 " + ev.SrcIP
+	}
+	return DedupAlert{
+		Alert:    model.Alert{Type: model.AlertSuspiciousCommand, Severity: severityOf(ev.Severity), IP: hostIP, Message: msg},
+		DedupKey: "cmd:" + agentID + ":" + shortHash(ev.Detail),
+	}
+}
+
+// Webshell 为网站目录中新增或修改的脚本文件生成告警。
+func Webshell(hostIP, agentID string, ev model.HostEvent) DedupAlert {
+	return DedupAlert{
+		Alert: model.Alert{Type: model.AlertWebshell, Severity: severityOf(ev.Severity), IP: hostIP,
+			Message: fmt.Sprintf("%s (%s) 疑似 Webshell：%s %s", hostIP, agentID, ev.Path, ev.Detail)},
+	}
+}
+
+// LateralMovement：同一来源短时间登录多台主机。告警关联到来源（它很可能已失陷）。
+func LateralMovement(srcIP, user string, targets int) DedupAlert {
+	return DedupAlert{
+		Alert: model.Alert{Type: model.AlertLateralMovement, Severity: model.SeverityHigh, IP: srcIP,
+			Message: fmt.Sprintf("疑似横向移动：%s 在 %d 分钟内（以用户 %s 等）登录了 %d 台主机",
+				srcIP, int(LateralWindow.Minutes()), user, targets)},
+		DedupKey: "lateral:" + srcIP,
+	}
+}
+
+// AgentStopped：Agent 收到停止信号。可能是关机 / 重启、运维停止，也可能是攻击者在清除监控。
+func AgentStopped(hostIP, agentID string) DedupAlert {
+	return DedupAlert{
+		Alert: model.Alert{Type: model.AlertAgentStopped, Severity: model.SeverityMedium, IP: hostIP,
+			Message: fmt.Sprintf("%s (%s) Agent 被停止：主机关机 / 重启、运维停止服务，或攻击者在清除监控；如非计划内操作请排查", hostIP, agentID)},
+		DedupKey: "agentstop:" + agentID,
+	}
+}
+
+func shortHash(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:8])
 }

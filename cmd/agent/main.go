@@ -25,6 +25,7 @@ func main() {
 	statePath := flag.String("state", "/var/lib/safe-agent/state.json", "state file path")
 	interval := flag.Duration("interval", 30*time.Second, "collect and report interval")
 	fimPaths := flag.String("fim-paths", "", "comma-separated paths to monitor (default: built-in list)")
+	webDirs := flag.String("web-dirs", strings.Join(agent.DefaultWebDirs, ","), "comma-separated web roots to watch for webshells (empty to disable)")
 	authLog := flag.String("auth-log", "", "auth log file (default: /var/log/auth.log or /var/log/secure, else journald)")
 	flag.Parse()
 
@@ -47,6 +48,9 @@ func main() {
 	cfg := agent.Config{
 		ServerURL: strings.TrimRight(*serverURL, "/"), AgentID: *id,
 		StatePath: *statePath, Interval: *interval, FIMPaths: paths,
+	}
+	if *webDirs != "" {
+		cfg.WebDirs = strings.Split(*webDirs, ",")
 	}
 	if cfg.AgentID == "" {
 		cfg.AgentID, _ = os.Hostname()

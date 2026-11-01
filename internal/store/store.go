@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	os        TEXT NOT NULL,
 	version   TEXT NOT NULL,
 	ips       TEXT NOT NULL,
+	capabilities TEXT NOT NULL DEFAULT '',
 	status    TEXT NOT NULL,
 	last_seen INTEGER NOT NULL -- unix 毫秒
 );
@@ -272,6 +273,7 @@ var addedColumns = []struct{ table, column, def string }{
 	{"tasks", "weak_password", "BOOLEAN NOT NULL DEFAULT FALSE"},
 	{"alerts", "resolution", "TEXT NOT NULL DEFAULT ''"},
 	{"alerts", "resolution_note", "TEXT NOT NULL DEFAULT ''"},
+	{"agents", "capabilities", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func initSchema(db *DB) error {

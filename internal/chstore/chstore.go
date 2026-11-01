@@ -207,6 +207,25 @@ func (s *Store) CountLoginFailures(ctx context.Context, agentID, srcIP string, f
 	return r.N, err
 }
 
+func (s *Store) CountLoginTargets(ctx context.Context, srcIP string, from, to time.Time) (int, error) {
+	out, err := s.do(ctx, s.database, `
+		SELECT uniqExact(agent_id) AS n FROM host_events
+		WHERE type = {type:String} AND src_ip = {src:String}
+		  AND ts BETWEEN fromUnixTimestamp64Milli({from:Int64}) AND fromUnixTimestamp64Milli({to:Int64})
+		FORMAT JSONEachRow`, map[string]string{
+		"type": string(model.EventLoginSuccess), "src": srcIP,
+		"from": strconv.FormatInt(from.UnixMilli(), 10), "to": strconv.FormatInt(to.UnixMilli(), 10),
+	}, nil)
+	if err != nil {
+		return 0, err
+	}
+	var r struct {
+		N int `json:"n"`
+	}
+	err = json.Unmarshal(out, &r)
+	return r.N, err
+}
+
 func (s *Store) ListHostEvents(ctx context.Context, f store.EventFilter) ([]model.HostEvent, error) {
 	out, err := s.do(ctx, s.database, `
 		SELECT toUnixTimestamp64Milli(ts) AS ts_ms, agent_id, type, user, src_ip, path, detail FROM host_events
