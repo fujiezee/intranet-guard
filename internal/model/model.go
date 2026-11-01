@@ -11,13 +11,19 @@ type Port struct {
 }
 
 type Asset struct {
-	IP        string    `json:"ip"`
-	Hostname  string    `json:"hostname,omitempty"`
-	Ports     []Port    `json:"ports"`
-	ProbeID   string    `json:"probe_id"`
-	Honeypot  bool      `json:"honeypot,omitempty"` // 该地址运行着蜜罐，端口是伪装的
-	FirstSeen time.Time `json:"first_seen"`
-	LastSeen  time.Time `json:"last_seen"`
+	IP         string   `json:"ip"`
+	Hostname   string   `json:"hostname,omitempty"`
+	Ports      []Port   `json:"ports"`
+	ProbeID    string   `json:"probe_id"`
+	Honeypot   bool     `json:"honeypot,omitempty"`   // 该地址运行着蜜罐，端口是伪装的
+	Importance string   `json:"importance,omitempty"` // normal / important / core
+	Owner      string   `json:"owner,omitempty"`
+	Tags       []string `json:"tags,omitempty"`
+	// Risk 是 0-100 的风险分，RiskReasons 说明扣分项；只在资产列表 / 详情中计算
+	Risk        int       `json:"risk"`
+	RiskReasons []string  `json:"risk_reasons,omitempty"`
+	FirstSeen   time.Time `json:"first_seen"`
+	LastSeen    time.Time `json:"last_seen"`
 }
 
 type TaskStatus string
@@ -104,6 +110,7 @@ type Alert struct {
 	AckedBy  string      `json:"acked_by,omitempty"`
 	// Resolution 为处理结果：空、false_positive（误报）或 simulation（自检产生）
 	Resolution     string    `json:"resolution,omitempty"`
+	IncidentID     int64     `json:"incident_id,omitempty"`
 	ResolutionNote string    `json:"resolution_note,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
@@ -450,3 +457,42 @@ type ResponseAction struct {
 	CreatedAt  time.Time         `json:"created_at"`
 	UpdatedAt  time.Time         `json:"updated_at"`
 }
+
+type IncidentStatus string
+
+const (
+	IncidentOpen          IncidentStatus = "open"
+	IncidentInvestigating IncidentStatus = "investigating"
+	IncidentResolved      IncidentStatus = "resolved"
+	IncidentFalsePositive IncidentStatus = "false_positive"
+)
+
+// Incident 是同一主机一段时间内的入侵类告警的集合，代表一次（疑似）入侵。
+type Incident struct {
+	ID         int64          `json:"id"`
+	IP         string         `json:"ip"`
+	Title      string         `json:"title"`
+	Severity   Severity       `json:"severity"`
+	Status     IncidentStatus `json:"status"`
+	Assignee   string         `json:"assignee,omitempty"`
+	Stages     []string       `json:"stages"` // 涉及的攻击阶段 key，按攻击链顺序
+	AlertCount int            `json:"alert_count"`
+	FirstSeen  time.Time      `json:"first_seen"`
+	LastSeen   time.Time      `json:"last_seen"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+}
+
+type IncidentNote struct {
+	ID        int64     `json:"id"`
+	Author    string    `json:"author"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// 资产重要性：用于风险评分加权和处置时的提示。
+const (
+	ImportanceNormal    = "normal"
+	ImportanceImportant = "important"
+	ImportanceCore      = "core"
+)

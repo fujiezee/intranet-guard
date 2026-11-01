@@ -30,6 +30,9 @@ CREATE TABLE IF NOT EXISTS assets (
 	ip         TEXT PRIMARY KEY,
 	hostname   TEXT NOT NULL DEFAULT '',
 	probe_id   TEXT NOT NULL,
+	importance TEXT NOT NULL DEFAULT 'normal',
+	owner      TEXT NOT NULL DEFAULT '',
+	tags       TEXT NOT NULL DEFAULT '',
 	first_seen TIMESTAMP NOT NULL,
 	last_seen  TIMESTAMP NOT NULL
 );
@@ -68,6 +71,7 @@ CREATE TABLE IF NOT EXISTS alerts (
 	dedup_key  TEXT NOT NULL DEFAULT '',
 	resolution      TEXT NOT NULL DEFAULT '',
 	resolution_note TEXT NOT NULL DEFAULT '',
+	incident_id     INTEGER NOT NULL DEFAULT 0,
 	created_at TIMESTAMP NOT NULL,
 	updated_at TIMESTAMP NOT NULL
 );
@@ -248,6 +252,28 @@ CREATE TABLE IF NOT EXISTS response_actions (
 	updated_at  TIMESTAMP NOT NULL
 );
 CREATE INDEX IF NOT EXISTS response_actions_agent ON response_actions(agent_id, status);
+CREATE TABLE IF NOT EXISTS incidents (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	ip          TEXT NOT NULL,
+	title       TEXT NOT NULL,
+	severity    TEXT NOT NULL,
+	status      TEXT NOT NULL,
+	assignee    TEXT NOT NULL DEFAULT '',
+	stages      TEXT NOT NULL DEFAULT '',
+	alert_count INTEGER NOT NULL,
+	first_seen  TIMESTAMP NOT NULL,
+	last_seen   TIMESTAMP NOT NULL,
+	created_at  TIMESTAMP NOT NULL,
+	updated_at  TIMESTAMP NOT NULL
+);
+CREATE INDEX IF NOT EXISTS incidents_ip ON incidents(ip, status, last_seen);
+CREATE TABLE IF NOT EXISTS incident_notes (
+	id          INTEGER PRIMARY KEY AUTOINCREMENT,
+	incident_id INTEGER NOT NULL,
+	author      TEXT NOT NULL,
+	body        TEXT NOT NULL,
+	created_at  TIMESTAMP NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sessions (
 	token_hash TEXT PRIMARY KEY,
 	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -289,6 +315,10 @@ var addedColumns = []struct{ table, column, def string }{
 	{"alerts", "resolution", "TEXT NOT NULL DEFAULT ''"},
 	{"alerts", "resolution_note", "TEXT NOT NULL DEFAULT ''"},
 	{"agents", "capabilities", "TEXT NOT NULL DEFAULT ''"},
+	{"alerts", "incident_id", "INTEGER NOT NULL DEFAULT 0"},
+	{"assets", "importance", "TEXT NOT NULL DEFAULT 'normal'"},
+	{"assets", "owner", "TEXT NOT NULL DEFAULT ''"},
+	{"assets", "tags", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func initSchema(db *DB) error {
@@ -547,7 +577,7 @@ func (s *Store) GetAsset(ctx context.Context, ip string) (model.Asset, error) {
 
 func (s *Store) queryAssets(ctx context.Context, where string, args ...any) ([]model.Asset, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT a.ip, a.hostname, a.probe_id, a.first_seen, a.last_seen,
+		SELECT a.ip, a.hostname, a.probe_id, a.importance, a.owner, a.tags, a.first_seen, a.last_seen,
 		       p.port, p.proto, p.service, p.banner
 		FROM assets a
 		LEFT JOIN ports p ON p.ip = a.ip
@@ -563,9 +593,13 @@ func (s *Store) queryAssets(ctx context.Context, where string, args ...any) ([]m
 		var a model.Asset
 		var port sql.NullInt64
 		var proto, service, banner sql.NullString
-		if err := rows.Scan(&a.IP, &a.Hostname, &a.ProbeID, &a.FirstSeen, &a.LastSeen,
+		var tags string
+		if err := rows.Scan(&a.IP, &a.Hostname, &a.ProbeID, &a.Importance, &a.Owner, &tags, &a.FirstSeen, &a.LastSeen,
 			&port, &proto, &service, &banner); err != nil {
 			return nil, err
+		}
+		if tags != "" {
+			a.Tags = strings.Split(tags, ",")
 		}
 		if n := len(assets); n == 0 || assets[n-1].IP != a.IP {
 			a.Ports = []model.Port{}
@@ -587,6 +621,9 @@ func (s *Store) queryAssets(ctx context.Context, where string, args ...any) ([]m
 	}
 	for i := range assets {
 		assets[i].Honeypot = hp[assets[i].IP]
+	}
+	if err := s.scoreAssets(ctx, assets); err != nil {
+		return nil, err
 	}
 	return assets, nil
 }

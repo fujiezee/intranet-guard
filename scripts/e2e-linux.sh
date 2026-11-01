@@ -85,6 +85,8 @@ wait_for "蜜罐访问产生高危告警，关联到来源 127.0.0.2" 30 \
 curl -fsS -o /dev/null http://127.0.0.1:18088/ || true
 sleep 5
 [ "$(api GET /honeypot-events | json 'len([e for e in d if e["src_ip"]=="127.0.0.1"])')" = 0 ] && ok "探针本机地址的访问不告警"
+wait_for "蜜罐告警归入来源主机的事件（侦察探测阶段）" 10 \
+	"api GET /incidents | json '[i for i in d if i[\"ip\"]==\"127.0.0.2\" and \"discovery\" in i[\"stages\"]][0]'"
 
 step "攻击模拟自检"
 api POST /simulations '{"agent_id":"ci-agent","scenarios":["fim","process","honeypot","reverse_shell","download_exec","webshell"]}' >/dev/null
@@ -94,6 +96,7 @@ api GET /simulations | json '"\n".join("    %s %-9s %s %s" % (s["scenario"], s["
 ok "文件篡改、临时目录执行、访问蜜罐、反弹 shell、下载并执行、Webshell 6 个场景全部检出"
 wait_for "自检产物已自动清理" 150 "! ls /etc/cron.d/safe-simulation-* /tmp/safe-sim-* /var/www/html/safe-sim-* 2>/dev/null | grep -q ."
 [ "$(api GET '/alerts?status=open' | json 'len([a for a in d if "sim-" in a["message"]])')" = 0 ] && ok "自检告警已自动关闭"
+[ "$(api GET /alerts | json 'len([a for a in d if "sim-" in a["message"] and a.get("incident_id")])')" = 0 ] && ok "自检告警不形成事件"
 
 step "Agent 停止"
 systemctl stop safe-agent

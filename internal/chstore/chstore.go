@@ -227,14 +227,20 @@ func (s *Store) CountLoginTargets(ctx context.Context, srcIP string, from, to ti
 }
 
 func (s *Store) ListHostEvents(ctx context.Context, f store.EventFilter) ([]model.HostEvent, error) {
+	from, to := f.Bounds()
+	if to > 253402300799000 { // ClickHouse DateTime64 上限（9999 年）
+		to = 253402300799000
+	}
 	out, err := s.do(ctx, s.database, `
 		SELECT toUnixTimestamp64Milli(ts) AS ts_ms, agent_id, type, user, src_ip, path, detail FROM host_events
 		WHERE ({agent:String} = '' OR agent_id = {agent:String})
 		  AND ({type:String} = '' OR type = {type:String})
 		  AND ({src:String} = '' OR src_ip = {src:String})
+		  AND ts BETWEEN fromUnixTimestamp64Milli({from:Int64}) AND fromUnixTimestamp64Milli({to:Int64})
 		ORDER BY ts DESC LIMIT {limit:UInt32}
 		FORMAT JSONEachRow`, map[string]string{
 		"agent": f.AgentID, "type": string(f.Type), "src": f.SrcIP, "limit": strconv.Itoa(f.Limit),
+		"from": strconv.FormatInt(from, 10), "to": strconv.FormatInt(to, 10),
 	}, nil)
 	if err != nil {
 		return nil, err

@@ -19,7 +19,12 @@
         <template #default="{ row }">{{ typeLabels[row.type] || row.type }}</template>
       </el-table-column>
       <el-table-column label="IP" width="140"><template #default="{ row }"><span class="mono">{{ row.ip }}</span></template></el-table-column>
-      <el-table-column prop="message" label="内容" min-width="260" />
+      <el-table-column label="内容" min-width="260">
+        <template #default="{ row }">
+          {{ row.message }}
+          <el-link v-if="row.incident_id" type="primary" :underline="false" class="inc" @click="router.push({ path: '/incidents', query: { id: row.incident_id } })">事件 #{{ row.incident_id }}</el-link>
+        </template>
+      </el-table-column>
       <el-table-column label="时间" width="170"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
       <el-table-column label="处理" width="210">
         <template #default="{ row }">
@@ -112,4 +117,5 @@ onMounted(load)
 <style scoped>
 .tools { display: flex; gap: 8px; }
 .acked { color: #909399; font-size: 12px; }
+.inc { margin-left: 6px; font-size: 12px; }
 </style>

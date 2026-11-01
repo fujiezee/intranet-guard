@@ -19,6 +19,7 @@ var copyTables = []struct {
 	{"enroll_tokens", true}, {"nodes", false}, {"vulns", true},
 	{"notify_channels", true}, {"notify_cursor", false}, {"audit_log", true},
 	{"honeypots", false}, {"honeypot_events", true}, {"simulations", false}, {"response_actions", false},
+	{"incidents", true}, {"incident_notes", true},
 }
 
 // boolColumns 在 SQLite 里存为 0/1，写入 PostgreSQL 时转换为布尔值。

@@ -22,10 +22,23 @@ type EventStore interface {
 }
 
 type EventFilter struct {
-	AgentID string
-	Type    model.HostEventType
-	SrcIP   string
-	Limit   int
+	AgentID  string
+	Type     model.HostEventType
+	SrcIP    string
+	From, To time.Time // 为零值时不限
+	Limit    int
+}
+
+// Bounds 返回时间范围（unix 毫秒），未设置时为全部时间。
+func (f EventFilter) Bounds() (int64, int64) {
+	from, to := int64(0), int64(1)<<62
+	if !f.From.IsZero() {
+		from = f.From.UnixMilli()
+	}
+	if !f.To.IsZero() {
+		to = f.To.UnixMilli()
+	}
+	return from, to
 }
 
 type IDSFilter struct {
@@ -92,11 +105,12 @@ func (e *sqlEvents) CountLoginTargets(ctx context.Context, srcIP string, from, t
 }
 
 func (e *sqlEvents) ListHostEvents(ctx context.Context, f EventFilter) ([]model.HostEvent, error) {
+	from, to := f.Bounds()
 	rows, err := e.db.QueryContext(ctx, `
 		SELECT id, agent_id, type, ts, "user", src_ip, path, detail FROM host_events
-		WHERE (? = '' OR agent_id = ?) AND (? = '' OR type = ?) AND (? = '' OR src_ip = ?)
+		WHERE (? = '' OR agent_id = ?) AND (? = '' OR type = ?) AND (? = '' OR src_ip = ?) AND ts BETWEEN ? AND ?
 		ORDER BY ts DESC, id DESC LIMIT ?`,
-		f.AgentID, f.AgentID, f.Type, f.Type, f.SrcIP, f.SrcIP, f.Limit)
+		f.AgentID, f.AgentID, f.Type, f.Type, f.SrcIP, f.SrcIP, from, to, f.Limit)
 	if err != nil {
 		return nil, err
 	}

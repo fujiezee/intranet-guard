@@ -35,8 +35,16 @@ func insertAlertRow(ctx context.Context, tx *Tx, a model.Alert, dedupKey string,
 		INSERT INTO alerts (type, severity, ip, port, message, status, acked_by, resolution, dedup_key, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
 		a.Type, a.Severity, a.IP, a.Port, a.Message, status, ackedBy, resolution, dedupKey, at, at).Scan(&alertID)
-	if err != nil || simID == "" || simStatus != model.SimRunning {
+	if err != nil {
 		return err
+	}
+	if simID == "" {
+		if err := attachToIncident(ctx, tx, alertID, a, at); err != nil {
+			return err
+		}
+	}
+	if simID == "" || simStatus != model.SimRunning {
+		return nil
 	}
 	var latency int64
 	if simStarted.Valid {
@@ -52,7 +60,7 @@ func insertAlertRow(ctx context.Context, tx *Tx, a model.Alert, dedupKey string,
 // ListAlerts 返回最近的告警；status 为空时返回全部状态。
 func (s *Store) ListAlerts(ctx context.Context, status model.AlertStatus, limit int) ([]model.Alert, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, type, severity, ip, port, message, status, acked_by, resolution, resolution_note, created_at, updated_at
+		SELECT id, type, severity, ip, port, message, status, acked_by, resolution, resolution_note, incident_id, created_at, updated_at
 		FROM alerts WHERE ? = '' OR status = ?
 		ORDER BY id DESC LIMIT ?`, status, status, limit)
 	if err != nil {
@@ -63,7 +71,7 @@ func (s *Store) ListAlerts(ctx context.Context, status model.AlertStatus, limit 
 	for rows.Next() {
 		var a model.Alert
 		if err := rows.Scan(&a.ID, &a.Type, &a.Severity, &a.IP, &a.Port, &a.Message, &a.Status,
-			&a.AckedBy, &a.Resolution, &a.ResolutionNote, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&a.AckedBy, &a.Resolution, &a.ResolutionNote, &a.IncidentID, &a.CreatedAt, &a.UpdatedAt); err != nil {
 			return nil, err
 		}
 		alerts = append(alerts, a)
@@ -90,12 +98,13 @@ func (s *Store) AckAlert(ctx context.Context, id int64, by string, falsePositive
 }
 
 type Stats struct {
-	Assets       int            `json:"assets"`
-	OpenPorts    int            `json:"open_ports"`
-	RunningTasks int            `json:"running_tasks"`
-	OpenAlerts   map[string]int `json:"open_alerts"` // 按严重程度
-	OpenVulns    map[string]int `json:"open_vulns"`  // 按严重程度
-	TopServices  []ServiceCount `json:"top_services"`
+	Assets        int            `json:"assets"`
+	OpenPorts     int            `json:"open_ports"`
+	RunningTasks  int            `json:"running_tasks"`
+	OpenAlerts    map[string]int `json:"open_alerts"`    // 按严重程度
+	OpenVulns     map[string]int `json:"open_vulns"`     // 按严重程度
+	OpenIncidents map[string]int `json:"open_incidents"` // 未结事件，按严重程度
+	TopServices   []ServiceCount `json:"top_services"`
 }
 
 type ServiceCount struct {
@@ -104,7 +113,7 @@ type ServiceCount struct {
 }
 
 func (s *Store) Stats(ctx context.Context) (Stats, error) {
-	st := Stats{OpenAlerts: map[string]int{}, OpenVulns: map[string]int{}, TopServices: []ServiceCount{}}
+	st := Stats{OpenAlerts: map[string]int{}, OpenVulns: map[string]int{}, OpenIncidents: map[string]int{}, TopServices: []ServiceCount{}}
 	err := s.db.QueryRowContext(ctx, `
 		SELECT (SELECT COUNT(*) FROM assets), (SELECT COUNT(*) FROM ports),
 		       (SELECT COUNT(*) FROM tasks WHERE status IN (?, ?))`,
@@ -120,6 +129,7 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	}{
 		{`SELECT severity, COUNT(*) FROM alerts WHERE status = ? GROUP BY severity`, string(model.AlertOpen), st.OpenAlerts},
 		{`SELECT severity, COUNT(*) FROM vulns WHERE status = ? GROUP BY severity`, string(model.VulnOpen), st.OpenVulns},
+		{`SELECT severity, COUNT(*) FROM incidents WHERE status <> ? AND status <> 'false_positive' GROUP BY severity`, string(model.IncidentResolved), st.OpenIncidents},
 	} {
 		rows, err := s.db.QueryContext(ctx, q.sql, q.status)
 		if err != nil {

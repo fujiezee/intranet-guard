@@ -6,6 +6,7 @@
       <el-menu :default-active="route.path" router background-color="#1f2d3d" text-color="#bfcbd9" active-text-color="#409eff">
         <el-menu-item index="/">总览</el-menu-item>
         <el-menu-item index="/assets">资产</el-menu-item>
+        <el-menu-item index="/incidents">事件</el-menu-item>
         <el-menu-item index="/alerts">告警</el-menu-item>
         <el-menu-item index="/vulns">漏洞</el-menu-item>
         <el-menu-item index="/ids">流量检测</el-menu-item>
