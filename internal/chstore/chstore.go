@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"safe/internal/model"
@@ -25,6 +26,9 @@ type Store struct {
 	user     string
 	password string
 	http     *http.Client
+
+	batchMu  sync.Mutex
+	batchers map[string]*batcher
 }
 
 // Open 连接 ClickHouse 并建表。dsn 形如 clickhouse://user:password@host:8123/dbname
@@ -41,7 +45,14 @@ func Open(ctx context.Context, dsn string, retention time.Duration) (*Store, err
 	s := &Store{
 		base:     scheme + "://" + u.Host + "/",
 		database: strings.Trim(u.Path, "/"),
-		http:     &http.Client{Timeout: 60 * time.Second},
+		// 默认连接池每个主机只保留 2 个空闲连接：大量 Agent 并发写入时连接用完即关，压测中耗尽本机端口。
+		// 保留足够的空闲连接复用，同时限制并发连接数，超出的请求排队而不是压垮 ClickHouse
+		http: &http.Client{Timeout: 60 * time.Second, Transport: &http.Transport{
+			Proxy:               http.ProxyFromEnvironment,
+			MaxConnsPerHost:     64,
+			MaxIdleConnsPerHost: 64,
+			IdleConnTimeout:     90 * time.Second,
+		}},
 	}
 	if s.database == "" {
 		s.database = "safe"
@@ -160,8 +171,37 @@ func (s *Store) insert(ctx context.Context, table string, rows []any) error {
 			return err
 		}
 	}
-	_, err := s.do(context.WithoutCancel(ctx), s.database, "INSERT INTO "+table+" FORMAT JSONEachRow", nil, buf.Bytes())
-	return err
+	// 服务端异步插入：大量 Agent 并发的小批量写入由 ClickHouse 合并成一批落盘，避免每次上报产生一个数据分片
+	// （上万 Agent 时会触发 Too many parts）。wait_for_async_insert=1：落盘后才返回，紧接着的检测查询能看到这批事件。
+	return s.batcherFor(table).add(ctx, buf.Bytes(), len(rows))
+}
+
+func (s *Store) batcherFor(table string) *batcher {
+	s.batchMu.Lock()
+	defer s.batchMu.Unlock()
+	if s.batchers == nil {
+		s.batchers = map[string]*batcher{}
+	}
+	b, ok := s.batchers[table]
+	if !ok {
+		b = newBatcher(table, func(ctx context.Context, table string, body []byte) error {
+			_, err := s.do(ctx, s.database, "INSERT INTO "+table+" FORMAT JSONEachRow", nil, body)
+			return err
+		})
+		s.batchers[table] = b
+	}
+	return b
+}
+
+// Close 写完尚在批处理中的事件。
+func (s *Store) Close() error {
+	s.batchMu.Lock()
+	defer s.batchMu.Unlock()
+	for _, b := range s.batchers {
+		b.close()
+	}
+	s.batchers = nil
+	return nil
 }
 
 func (s *Store) InsertHostEvents(ctx context.Context, agentID string, events []model.HostEvent) error {

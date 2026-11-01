@@ -3,7 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
-	"errors"
+	"sort"
+	"strings"
 	"time"
 
 	"safe/internal/model"
@@ -110,40 +111,36 @@ func (s *Store) execOne(ctx context.Context, q string, args ...any) error {
 	return nil
 }
 
-// NotifyCursor 返回已推送的最大告警 ID。首次调用时从当前最大 ID 开始，不推送历史告警。
-func (s *Store) NotifyCursor(ctx context.Context) (int64, error) {
-	var last int64
-	err := s.db.QueryRowContext(ctx, `SELECT last_id FROM notify_cursor WHERE id = 1`).Scan(&last)
-	if err == nil {
-		return last, nil
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		return 0, err
+// MarkNotified 把告警标记为已推送。
+func (s *Store) MarkNotified(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
 	}
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM alerts`).Scan(&last); err != nil {
-		return 0, err
+	args := make([]any, len(ids))
+	marks := make([]string, len(ids))
+	for i, id := range ids {
+		args[i], marks[i] = id, "?"
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO notify_cursor (id, last_id) VALUES (1, ?) ON CONFLICT(id) DO NOTHING`, last)
-	if err != nil {
-		return 0, err
-	}
-	return s.NotifyCursor(ctx)
+	_, err := s.db.ExecContext(ctx, `UPDATE alerts SET notified = TRUE WHERE id IN (`+strings.Join(marks, ",")+`)`, args...)
+	return err
 }
 
-// AdvanceNotifyCursor 比较并交换推送进度；返回 false 表示另一个实例已经处理了这批告警。
-func (s *Store) AdvanceNotifyCursor(ctx context.Context, from, to int64) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `UPDATE notify_cursor SET last_id = ? WHERE id = 1 AND last_id = ?`, to, from)
-	if err != nil {
-		return false, err
-	}
-	n, _ := res.RowsAffected()
-	return n == 1, nil
-}
-
-// AlertsAfter 返回 ID 大于 after 的告警，按 ID 升序。
-func (s *Store) AlertsAfter(ctx context.Context, after int64, limit int) ([]model.Alert, error) {
+// ClaimPendingAlerts 领取一批尚未推送的告警，按 ID 升序返回。
+//
+// 不用"上次推送到的 ID"作游标：并发写入时 ID 较小的告警可能晚于 ID 较大的告警提交，游标会跳过它而漏推。
+// 领取带租约：并发的推送方（多实例切换的瞬间）领到互不重叠的告警，不会重复推送；领取后实例宕机、
+// 没来得及标记已推送的告警，租约过期后被重新领取，不会漏推。外层 WHERE 重复判断领取条件：
+// PostgreSQL 并发更新同一行时会按最新版本重新判断外层条件，已被别人领取的行因此被排除。
+func (s *Store) ClaimPendingAlerts(ctx context.Context, limit int, lease time.Duration) ([]model.Alert, error) {
+	now := time.Now().UTC()
+	expired := now.Add(-lease)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, type, severity, ip, port, message, status, acked_by, resolution, created_at, updated_at
-		FROM alerts WHERE id > ? ORDER BY id LIMIT ?`, after, limit)
+		UPDATE alerts SET notify_claimed_at = ?
+		WHERE id IN (
+			SELECT id FROM alerts WHERE NOT notified AND (notify_claimed_at IS NULL OR notify_claimed_at < ?) ORDER BY id LIMIT ?
+		) AND NOT notified AND (notify_claimed_at IS NULL OR notify_claimed_at < ?)
+		RETURNING id, type, severity, ip, port, message, status, acked_by, resolution, created_at, updated_at`,
+		now, expired, limit, expired)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +154,11 @@ func (s *Store) AlertsAfter(ctx context.Context, after int64, limit int) ([]mode
 		}
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID }) // RETURNING 不保证顺序
+	return out, nil
 }
 
 // --- 操作审计 ---

@@ -82,7 +82,7 @@ spec:
             - --
             - /var/lib/safe-agent-k8s/bin/safe-agent
             - -server
-            - "{{.ServerURL}}"
+            - "{{.Servers}}"
             - -state
             - /var/lib/safe-agent-k8s/state.json
           resources:

@@ -30,7 +30,7 @@ func (s *Server) agentReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(rep.Events) > 0 {
-		slog.Info("agent events saved", "agent", rep.Agent.ID, "events", len(rep.Events))
+		slog.Debug("agent events saved", "agent", rep.Agent.ID, "events", len(rep.Events))
 	}
 	if err := s.store.RecordCommandResults(r.Context(), rep.Agent.ID, rep.Results); err != nil {
 		writeInternal(w, err)

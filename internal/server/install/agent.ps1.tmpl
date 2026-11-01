@@ -8,6 +8,7 @@
 & {
 $ErrorActionPreference = 'Stop'
 $Server = '{{.ServerURL}}'
+$Servers = '{{.Servers}}' # 写入节点配置的全部管理中心实例（高可用部署时有多个，连接失败自动切换）
 $Name = 'safe-agent'
 $Arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'amd64' }
 $InstallDir = Join-Path $env:ProgramFiles 'safe-agent'
@@ -92,13 +93,13 @@ try {
 		Say "注册到管理中心 $Server"
 		# Windows PowerShell 5.1 在 Stop 模式下会把原生程序写到 stderr 的日志当作错误终止脚本，这里临时放宽，以退出码为准
 		$ErrorActionPreference = 'Continue'
-		& $Exe -enroll-only -server $Server -state $State 2>&1 | ForEach-Object { Write-Host "    $_" }
+		& $Exe -enroll-only -server $Servers -state $State 2>&1 | ForEach-Object { Write-Host "    $_" }
 		$code = $LASTEXITCODE
 		$ErrorActionPreference = 'Stop'
 		if ($code -ne 0) { Die '注册失败：令牌无效、已用完或已过期，或无法连接管理中心' }
 	}
 
-	$bin = "`"$Exe`" -server $Server -state `"$State`" -log-file `"$Log`""
+	$bin = "`"$Exe`" -server $Servers -state `"$State`" -log-file `"$Log`""
 	if ($env:SAFE_AGENT_EXTRA) { $bin += ' ' + $env:SAFE_AGENT_EXTRA }
 	if (Get-Service -Name $Name -ErrorAction SilentlyContinue) {
 		Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$Name" -Name ImagePath -Value $bin

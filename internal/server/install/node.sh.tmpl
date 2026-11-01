@@ -9,6 +9,7 @@
 set -eu
 
 SERVER='{{.ServerURL}}'
+SERVERS='{{.Servers}}' # 写入节点配置的全部管理中心实例（高可用部署时有多个，连接失败自动切换）
 PIN='{{.Pin}}'
 KIND='{{.Kind}}'
 NAME="safe-$KIND"
@@ -68,7 +69,7 @@ install -d "$(dirname "$BIN")" "$(dirname "$UNIT")"
 install -m 755 "$TMP" "$BIN"
 
 install -d -m 700 "$STATE"
-ARGS="-server $SERVER -state $STATE/state.json"
+ARGS="-server $SERVERS -state $STATE/state.json"
 {{- if eq .Kind "agent"}}
 [ -n "${SAFE_AGENT_ID:-}" ] && ARGS="$ARGS -id $SAFE_AGENT_ID"
 {{- else}}

@@ -22,6 +22,7 @@ import (
 
 	"safe/internal/chstore"
 	"safe/internal/model"
+	"safe/internal/node"
 	"safe/internal/notify"
 	"safe/internal/pki"
 	"safe/internal/server"
@@ -43,6 +44,7 @@ func main() {
 	tlsCert := flag.String("tls-cert", "", "console HTTPS certificate file (PEM)")
 	tlsKey := flag.String("tls-key", "", "console HTTPS private key file (PEM)")
 	tlsInternal := flag.Bool("tls-internal", false, "serve the console over HTTPS with a certificate from the internal CA (admins must trust pki/ca.crt)")
+	nodeURLs := flag.String("node-urls", "", "comma-separated node endpoint URLs of all instances (high availability); written into node install commands so nodes fail over between them")
 	distDir := flag.String("dist-dir", "", "directory with safe-agent/safe-probe linux binaries served to the one-line node installer")
 	trustedProxies := flag.String("trusted-proxies", "", "comma-separated CIDRs of reverse proxies whose X-Forwarded-For is trusted, e.g. 127.0.0.1/32")
 	taskTimeout := flag.Duration("task-timeout", 6*time.Hour, "mark running scan tasks as failed after this long without a result")
@@ -116,6 +118,16 @@ func main() {
 		cfg.NodePort, _ = strconv.Atoi(port)
 	}
 	cfg.DistDir = *distDir
+	if *nodeURLs != "" {
+		list, err := node.ParseServers(*nodeURLs)
+		if err != nil {
+			slog.Error("invalid -node-urls", "err", err)
+			os.Exit(2)
+		}
+		for _, u := range list {
+			cfg.NodeURLs = append(cfg.NodeURLs, u.String())
+		}
+	}
 	nodeTLS, err := server.NodeTLSConfig(ca, hosts, serverKey)
 	if err != nil {
 		slog.Error("node TLS", "err", err)
@@ -175,8 +187,11 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go maintenance(ctx, st, handler, *taskTimeout)
-	go notify.Run(ctx, st, 10*time.Second)
+	// 多个实例共用 PostgreSQL 时，后台任务只在选出的主实例上运行
+	leader := st.NewLeader()
+	go leader.Run(ctx)
+	go maintenance(ctx, st, handler, *taskTimeout, leader.IsLeader)
+	go notify.Run(ctx, st, 10*time.Second, leader.IsLeader)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -242,7 +257,7 @@ const (
 )
 
 // maintenance 定期执行：Agent 离线检测、超时任务清理（每分钟），过期会话与历史事件清理（每小时）。
-func maintenance(ctx context.Context, st *store.Store, srv *server.Server, taskTimeout time.Duration) {
+func maintenance(ctx context.Context, st *store.Store, srv *server.Server, taskTimeout time.Duration, active func() bool) {
 	minute := time.NewTicker(time.Minute)
 	hour := time.NewTicker(time.Hour)
 	sims := time.NewTicker(10 * time.Second)
@@ -256,6 +271,9 @@ func maintenance(ctx context.Context, st *store.Store, srv *server.Server, taskT
 		case <-ctx.Done():
 			return
 		case <-feeds.C:
+			if !active() {
+				continue
+			}
 			due, err := st.FeedsDue(ctx, 6*time.Hour)
 			if err != nil {
 				slog.Warn("intel feeds", "err", err)
@@ -264,6 +282,9 @@ func maintenance(ctx context.Context, st *store.Store, srv *server.Server, taskT
 				srv.FetchFeed(ctx, f)
 			}
 		case <-sims.C:
+			if !active() {
+				continue
+			}
 			if n, err := st.ExpireSimulations(ctx, time.Now()); err != nil {
 				slog.Warn("expire simulations", "err", err)
 			} else if n > 0 {
@@ -275,6 +296,9 @@ func maintenance(ctx context.Context, st *store.Store, srv *server.Server, taskT
 				slog.Warn("response actions expired", "count", n)
 			}
 		case <-minute.C:
+			if !active() {
+				continue
+			}
 			if n, err := st.MarkOfflineAgents(ctx, time.Now().Add(-agentOfflineAfter)); err != nil {
 				slog.Warn("mark offline agents", "err", err)
 			} else if n > 0 {
@@ -286,6 +310,9 @@ func maintenance(ctx context.Context, st *store.Store, srv *server.Server, taskT
 				slog.Warn("scan tasks timed out", "tasks", ids, "timeout", taskTimeout)
 			}
 		case <-hour.C:
+			if !active() {
+				continue
+			}
 			if err := st.DeleteExpiredSessions(ctx); err != nil {
 				slog.Warn("delete expired sessions", "err", err)
 			}

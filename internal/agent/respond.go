@@ -421,11 +421,27 @@ func release() (string, error) {
 	return "已解除隔离", nil
 }
 
-// managementAddrs 解析管理中心地址；隔离后必须仍能连接管理中心，才能接收解除隔离的指令。
+// managementAddrs 解析全部管理中心实例的地址；隔离后必须仍能连接管理中心，才能接收解除隔离的指令。
 func (a *Agent) managementAddrs() ([]netip.Addr, error) {
-	u, err := url.Parse(a.cfg.ServerURL)
+	urls := a.cfg.ServerURLs
+	if len(urls) == 0 {
+		urls = []string{a.cfg.ServerURL}
+	}
+	var out []netip.Addr
+	for _, s := range urls {
+		addrs, err := resolveServer(s)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, addrs...)
+	}
+	return out, nil
+}
+
+func resolveServer(server string) ([]netip.Addr, error) {
+	u, err := url.Parse(server)
 	if err != nil || u.Hostname() == "" {
-		return nil, fmt.Errorf("invalid server url %q", a.cfg.ServerURL)
+		return nil, fmt.Errorf("invalid server url %q", server)
 	}
 	if ip, err := netip.ParseAddr(u.Hostname()); err == nil {
 		return []netip.Addr{ip.Unmap()}, nil

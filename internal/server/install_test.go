@@ -79,6 +79,18 @@ func TestInstallEndpoints(t *testing.T) {
 		t.Errorf("k8s manifest: %d\n%s", code, manifest)
 	}
 
+	// 高可用：配置了 -node-urls 时，写入节点配置的是全部实例，下载仍用本次访问的实例
+	srv.cfg.NodeURLs = []string{"https://10.1.2.3:8443", "https://10.1.2.4:8443"}
+	_, script := get("/install/agent.sh", "10.1.2.3:8443")
+	if !strings.Contains(script, "SERVERS='https://10.1.2.3:8443,https://10.1.2.4:8443'") || !strings.Contains(script, "SERVER='https://10.1.2.3:8443'") {
+		t.Errorf("HA agent script:\n%s", script)
+	}
+	_, manifest = get("/install/agent-k8s.yaml", "10.1.2.3:8443")
+	if !strings.Contains(manifest, `- "https://10.1.2.3:8443,https://10.1.2.4:8443"`) {
+		t.Errorf("HA k8s manifest")
+	}
+	srv.cfg.NodeURLs = nil
+
 	// Host 头会写进脚本，含引号等字符时拒绝（防止注入命令）。
 	if code, _ := get("/install/agent.sh", "evil';rm -rf /;'"); code != http.StatusBadRequest {
 		t.Errorf("malicious host: %d", code)
@@ -129,7 +141,7 @@ func checkShellVars(t *testing.T, name, script string) {
 }
 
 func TestShellScriptsVarBraces(t *testing.T) {
-	for _, f := range []string{"../../scripts/install.sh", "../../scripts/backup.sh", "../../scripts/test-install.sh", "../../scripts/e2e-linux.sh", "../../scripts/e2e-k8s.sh"} {
+	for _, f := range []string{"../../scripts/install.sh", "../../scripts/backup.sh", "../../scripts/test-install.sh", "../../scripts/e2e-linux.sh", "../../scripts/e2e-k8s.sh", "../../scripts/e2e-ha.sh"} {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

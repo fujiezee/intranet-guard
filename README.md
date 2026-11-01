@@ -16,6 +16,16 @@ tar -xzf safe-0.1.0-linux-amd64.tar.gz && cd safe-0.1.0-linux-amd64 && sudo ./in
 
 安装脚本的模拟测试（无需 root / systemd）：`scripts/test-install.sh`。
 
+## 高可用部署（多个管理中心实例）
+
+1. 准备 PostgreSQL 和 ClickHouse（各自按官方文档做主备 / 集群），所有实例使用同一组连接串（`-db`、`-events-db`）。
+2. 在第一台机器上安装并启动一次，把生成的 `pki` 目录（CA 与服务端私钥）复制到其他实例。
+3. 各实例启动参数加 `-node-urls https://实例1:8443,https://实例2:8443`：之后控制台生成的安装命令会把全部实例写入节点，
+   节点连接失败时自动切换；推送、超时等后台任务自动选一个实例执行，该实例宕机后 5 秒内由其他实例接手。
+4. 控制台可放在任意 HTTP 负载均衡后面（登录会话保存在数据库中，各实例通用）。
+
+原理与压测结果见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 第 20 节；压测工具：`go run ./cmd/loadtest -h`。
+
 ## 开发环境运行
 
 ```bash

@@ -47,15 +47,25 @@ func randName() string {
 
 // OpenMain 只打开主库（SQLite 或 SAFE_TEST_PG_DSN 指定的 PostgreSQL），事件也存在主库，不接 ClickHouse。
 func OpenMain(t *testing.T) *store.Store {
+	return OpenShared(t, 1)[0]
+}
+
+// OpenShared 打开 n 个共用同一数据库（同一 schema 或同一 SQLite 文件）的 Store，模拟多个管理中心实例。
+func OpenShared(t *testing.T, n int) []*store.Store {
 	t.Helper()
 	dsn := os.Getenv("SAFE_TEST_PG_DSN")
 	if dsn == "" {
-		st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
-		if err != nil {
-			t.Fatal(err)
+		path := filepath.Join(t.TempDir(), "test.db")
+		var out []*store.Store
+		for i := 0; i < n; i++ {
+			st, err := store.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			out = append(out, st)
 		}
-		t.Cleanup(func() { st.Close() })
-		return st
+		return out
 	}
 
 	schema := randName()
@@ -74,14 +84,20 @@ func OpenMain(t *testing.T) *store.Store {
 	q.Set("search_path", schema)
 	u.RawQuery = q.Encode()
 
-	st, err := store.Open(u.String())
-	if err != nil {
-		t.Fatal(err)
+	var out []*store.Store
+	for i := 0; i < n; i++ {
+		st, err := store.Open(u.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, st)
 	}
 	t.Cleanup(func() {
-		st.Close()
+		for _, st := range out {
+			st.Close()
+		}
 		admin.Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
 		admin.Close()
 	})
-	return st
+	return out
 }

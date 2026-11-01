@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
@@ -34,6 +35,8 @@ type Config struct {
 	InstallPin string
 	NodePort   int
 	DistDir    string
+	// NodeURLs 是高可用部署时全部实例的节点接入地址（https://host:port），写入一键安装的节点配置
+	NodeURLs []string
 
 	// HSTS 为 true 时（控制台经 HTTPS 提供）下发 Strict-Transport-Security，要求浏览器以后只用 HTTPS 访问。
 	HSTS bool
@@ -434,6 +437,12 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 func writeInternal(w http.ResponseWriter, err error) {
+	if errors.Is(err, context.Canceled) {
+		// 客户端已断开（节点重启、请求超时放弃）：不是服务端故障，不记为错误
+		slog.Debug("request canceled by client", "err", err)
+		writeError(w, http.StatusServiceUnavailable, "request canceled")
+		return
+	}
 	slog.Error("internal error", "err", err)
 	writeError(w, http.StatusInternalServerError, "internal error")
 }

@@ -27,14 +27,15 @@ const Version = "0.3.0"
 var AuthLogCandidates = []string{"/var/log/auth.log", "/var/log/secure"}
 
 type Config struct {
-	ServerURL string
-	HTTP      *http.Client // mTLS 客户端（见 internal/node）
-	Token     string       // 旧版共享 token，仅在未注册证书时使用
-	AgentID   string
-	StatePath string
-	Interval  time.Duration
-	FIMPaths  []string
-	WebDirs   []string // Webshell 监控的网站目录
+	ServerURL  string       // 请求按第一个实例拼 URL，连接失败时由 node 包切换到其他实例
+	ServerURLs []string     // 全部管理中心实例（隔离主机时都要放行）
+	HTTP       *http.Client // mTLS 客户端（见 internal/node）
+	Token      string       // 旧版共享 token，仅在未注册证书时使用
+	AgentID    string
+	StatePath  string
+	Interval   time.Duration
+	FIMPaths   []string
+	WebDirs    []string // Webshell 监控的网站目录
 }
 
 // State 持久化到磁盘，Agent 重启后从上次位置继续，不重复上报也不漏报。

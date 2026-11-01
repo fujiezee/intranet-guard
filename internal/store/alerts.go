@@ -32,8 +32,8 @@ func insertAlertRow(ctx context.Context, tx *Tx, a model.Alert, dedupKey string,
 	}
 	var alertID int64
 	err := tx.QueryRowContext(ctx, `
-		INSERT INTO alerts (type, severity, ip, port, message, status, acked_by, resolution, dedup_key, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+		INSERT INTO alerts (type, severity, ip, port, message, status, acked_by, resolution, dedup_key, notified, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, FALSE, ?, ?) RETURNING id`,
 		a.Type, a.Severity, a.IP, a.Port, a.Message, status, ackedBy, resolution, dedupKey, at, at).Scan(&alertID)
 	if err != nil {
 		return err

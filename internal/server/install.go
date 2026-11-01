@@ -48,7 +48,12 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid host")
 		return
 	}
-	data := map[string]string{"Kind": kind, "ServerURL": "https://" + r.Host, "Pin": s.cfg.InstallPin}
+	// 下载用本次访问的实例；写入节点配置的是全部实例（未配置 -node-urls 时即本实例）
+	servers := "https://" + r.Host
+	if len(s.cfg.NodeURLs) > 0 {
+		servers = strings.Join(s.cfg.NodeURLs, ",")
+	}
+	data := map[string]string{"Kind": kind, "ServerURL": "https://" + r.Host, "Servers": servers, "Pin": s.cfg.InstallPin}
 	if strings.HasSuffix(script, ".yaml") {
 		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 		_ = k8sManifest.Execute(w, data)

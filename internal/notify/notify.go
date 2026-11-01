@@ -143,7 +143,9 @@ func truncate(s string, n int) string {
 
 // Run 定期把新告警推送到所有启用的渠道。推送进度保存在数据库中，多个管理中心实例同时运行时
 // 通过比较并交换只有一个实例处理同一批告警；先占位再发送，即同一告警最多推送一次。
-func Run(ctx context.Context, st *store.Store, interval time.Duration) {
+// Run 定期推送新告警。active 为 false 时跳过（多实例部署时只由主实例推送；
+// 即使多个实例同时推送，推送游标的比较并交换也保证每条告警只推送一次）。
+func Run(ctx context.Context, st *store.Store, interval time.Duration, active func() bool) {
 	hc := &http.Client{Timeout: 10 * time.Second}
 	t := time.NewTicker(interval)
 	defer t.Stop()
@@ -153,6 +155,9 @@ func Run(ctx context.Context, st *store.Store, interval time.Duration) {
 			return
 		case <-t.C:
 		}
+		if !active() {
+			continue
+		}
 		if err := RunOnce(ctx, st, hc); err != nil {
 			slog.Warn("alert notification", "err", err)
 		}
@@ -160,18 +165,20 @@ func Run(ctx context.Context, st *store.Store, interval time.Duration) {
 }
 
 func RunOnce(ctx context.Context, st *store.Store, hc *http.Client) error {
-	cursor, err := st.NotifyCursor(ctx)
-	if err != nil {
-		return err
-	}
-	alerts, err := st.AlertsAfter(ctx, cursor, 500)
+	// 领取（租约 30 秒）→ 推送 → 标记已推送：实例在推送途中宕机时，租约过期后由其他实例重新领取推送
+	alerts, err := st.ClaimPendingAlerts(ctx, 500, 30*time.Second)
 	if err != nil || len(alerts) == 0 {
 		return err
 	}
-	won, err := st.AdvanceNotifyCursor(ctx, cursor, alerts[len(alerts)-1].ID)
-	if err != nil || !won {
-		return err
+	ids := make([]int64, len(alerts))
+	for i, a := range alerts {
+		ids[i] = a.ID
 	}
+	defer func() {
+		if err := st.MarkNotified(context.WithoutCancel(ctx), ids); err != nil {
+			slog.Warn("mark alerts notified", "err", err)
+		}
+	}()
 	channels, err := st.ListChannels(ctx)
 	if err != nil {
 		return err

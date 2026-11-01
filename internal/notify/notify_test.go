@@ -119,13 +119,15 @@ func TestRunOnce(t *testing.T) {
 
 	st.SaveIDSReport(ctx, model.IDSReport{ProbeID: "p", Events: []model.IDSEvent{
 		{Time: time.Now(), SrcIP: "1.1.1.1", DestIP: "10.0.0.1", SignatureID: 1, Signature: "old", Severity: 1}}})
+	// 推送循环在配置渠道之前已经运行过：当时没有渠道，这条告警被标记为已处理，之后不会再推送
+	RunOnce(ctx, st, http.DefaultClient)
 	var hook captured
 	s := hook.server(t)
 	st.CreateChannel(ctx, model.NotifyChannel{Name: "all", Type: model.ChannelWebhook, URL: s.URL, MinSeverity: model.SeverityLow, Enabled: true})
 	st.CreateChannel(ctx, model.NotifyChannel{Name: "high", Type: model.ChannelWebhook, URL: s.URL + "/high", MinSeverity: model.SeverityHigh, Enabled: true})
 	st.CreateChannel(ctx, model.NotifyChannel{Name: "off", Type: model.ChannelWebhook, URL: s.URL + "/off", MinSeverity: model.SeverityLow, Enabled: false})
 
-	RunOnce(ctx, st, http.DefaultClient) // 初始化游标：历史告警不推送
+	RunOnce(ctx, st, http.DefaultClient)
 	if len(hook.reqs) != 0 {
 		t.Fatalf("historical alerts pushed")
 	}

@@ -24,7 +24,7 @@ import (
 
 func main() {
 	agent.RunSimulationChildIfRequested()
-	serverURL := flag.String("server", "https://127.0.0.1:8443", "management server node endpoint URL")
+	serverURL := flag.String("server", "https://127.0.0.1:8443", "management server node endpoint URL; comma-separated for multiple instances (automatic failover)")
 	id := flag.String("id", "", "agent ID (default: hostname)")
 	statePath := flag.String("state", defaultStatePath, "state file path")
 	interval := flag.Duration("interval", 30*time.Second, "collect and report interval")
@@ -54,8 +54,17 @@ func main() {
 	if *authLog != "" {
 		agent.AuthLogCandidates = []string{*authLog}
 	}
+	servers, err := node.ParseServers(*serverURL)
+	if err != nil {
+		slog.Error("invalid -server", "err", err)
+		os.Exit(2)
+	}
+	var serverList []string
+	for _, u := range servers {
+		serverList = append(serverList, u.String())
+	}
 	cfg := agent.Config{
-		ServerURL: strings.TrimRight(*serverURL, "/"), AgentID: *id,
+		ServerURL: serverList[0], ServerURLs: serverList, AgentID: *id,
 		StatePath: *statePath, Interval: *interval, FIMPaths: paths,
 	}
 	if *webDirs != "" {

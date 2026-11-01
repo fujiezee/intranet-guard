@@ -11,7 +11,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,10 +30,11 @@ type Client struct {
 	HTTP *http.Client
 	ID   string // 证书中的节点 ID，以它为准
 
-	kind   string
-	dir    string
-	server string
-	cert   atomic.Pointer[tls.Certificate]
+	kind    string
+	dir     string
+	server  string     // 第一个管理中心地址：请求都按它拼 URL，由 failover 转到可用的实例
+	servers []*url.URL // 全部实例
+	cert    atomic.Pointer[tls.Certificate]
 }
 
 func (c *Client) keyPath() string  { return filepath.Join(c.dir, "node.key") }
@@ -40,15 +43,30 @@ func (c *Client) caPath() string   { return filepath.Join(c.dir, "ca.crt") }
 
 // Connect 加载本机证书；没有证书时用 SAFE_ENROLL_TOKEN 向管理中心注册。
 // 证书和私钥保存在 dir 下，私钥只在本机生成、从不上传。
-func Connect(ctx context.Context, kind, id, dir, serverURL string) (*Client, error) {
-	c := &Client{kind: kind, dir: dir, server: strings.TrimRight(serverURL, "/")}
+// servers 为逗号分隔的管理中心地址；高可用部署时列出全部实例，连接失败时自动切换。
+func Connect(ctx context.Context, kind, id, dir, servers string) (*Client, error) {
+	list, err := ParseServers(servers)
+	if err != nil {
+		return nil, err
+	}
+	c := &Client{kind: kind, dir: dir, server: list[0].String(), servers: list}
 	if _, err := os.Stat(c.certPath()); errors.Is(err, os.ErrNotExist) {
 		token := os.Getenv("SAFE_ENROLL_TOKEN")
 		if token == "" {
 			return nil, ErrNotEnrolled
 		}
-		if err := c.enroll(ctx, token, id); err != nil {
-			return nil, fmt.Errorf("enroll: %w", err)
+		// 依次尝试各实例：注册时某个实例不可用不影响
+		var errs []error
+		for _, u := range list {
+			if err := c.enroll(ctx, u.String(), token, id); err == nil {
+				errs = nil
+				break
+			} else {
+				errs = append(errs, fmt.Errorf("%s: %w", u.Host, err))
+			}
+		}
+		if errs != nil {
+			return nil, fmt.Errorf("enroll: %w", errors.Join(errs...))
 		}
 	}
 
@@ -70,11 +88,17 @@ func Connect(ctx context.Context, kind, id, dir, serverURL string) (*Client, err
 	}
 	c.HTTP = &http.Client{
 		Timeout: 60 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{
-			RootCAs:    pool,
-			MinVersion: tls.VersionTLS12,
-			GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
-				return c.cert.Load(), nil
+		Transport: &failover{servers: c.servers, base: &http.Transport{
+			// 连接失败要尽快换实例，不能等到总超时
+			DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+			TLSHandshakeTimeout: 10 * time.Second,
+			MaxIdleConnsPerHost: 4,
+			TLSClientConfig: &tls.Config{
+				RootCAs:    pool,
+				MinVersion: tls.VersionTLS12,
+				GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+					return c.cert.Load(), nil
+				},
 			},
 		}},
 	}
@@ -100,7 +124,10 @@ type certResponse struct {
 	CA   string `json:"ca"`
 }
 
-func (c *Client) enroll(ctx context.Context, token, id string) error {
+// Servers 返回全部管理中心实例地址。
+func (c *Client) Servers() []*url.URL { return c.servers }
+
+func (c *Client) enroll(ctx context.Context, server, token, id string) error {
 	if id == "" {
 		return errors.New("node id is required for enrollment")
 	}
@@ -113,7 +140,7 @@ func (c *Client) enroll(ctx context.Context, token, id string) error {
 	insecure := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12},
 	}}
-	caPEM, err := get(ctx, insecure, c.server+"/api/v1/ca")
+	caPEM, err := get(ctx, insecure, server+"/api/v1/ca")
 	if err != nil {
 		return fmt.Errorf("fetch CA: %w", err)
 	}
@@ -131,7 +158,7 @@ func (c *Client) enroll(ctx context.Context, token, id string) error {
 		return err
 	}
 	var resp certResponse
-	if err := postJSON(ctx, verified, c.server+"/api/v1/enroll",
+	if err := postJSON(ctx, verified, server+"/api/v1/enroll",
 		map[string]string{"token": token, "kind": c.kind, "id": id, "csr": string(csrPEM)}, &resp); err != nil {
 		return err
 	}

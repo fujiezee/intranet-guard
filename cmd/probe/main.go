@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -68,7 +67,7 @@ func (c *client) do(ctx context.Context, method, path string, body, out any) err
 }
 
 func main() {
-	serverURL := flag.String("server", "https://127.0.0.1:8443", "management server node endpoint URL")
+	serverURL := flag.String("server", "https://127.0.0.1:8443", "management server node endpoint URL; comma-separated for multiple instances (automatic failover)")
 	probeID := flag.String("id", "", "probe ID, e.g. the segment name (required for enrollment)")
 	interval := flag.Duration("interval", 10*time.Second, "task polling interval")
 	concurrency := flag.Int("concurrency", 512, "concurrent TCP connections")
@@ -80,7 +79,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	c := &client{base: strings.TrimRight(*serverURL, "/"), probeID: *probeID}
+	servers, err := node.ParseServers(*serverURL)
+	if err != nil {
+		slog.Error("invalid -server", "err", err)
+		os.Exit(2)
+	}
+	c := &client{base: servers[0].String(), probeID: *probeID}
 	nc, err := node.Connect(ctx, string(model.NodeProbe), *probeID, filepath.Dir(*statePath), *serverURL)
 	switch {
 	case err == nil:

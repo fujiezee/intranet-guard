@@ -73,6 +73,8 @@ CREATE TABLE IF NOT EXISTS alerts (
 	resolution      TEXT NOT NULL DEFAULT '',
 	resolution_note TEXT NOT NULL DEFAULT '',
 	incident_id     INTEGER NOT NULL DEFAULT 0,
+	notified        BOOLEAN NOT NULL DEFAULT TRUE, -- 新告警写入时为 FALSE，推送后置为 TRUE
+	notify_claimed_at TIMESTAMP,                   -- 推送领取时间（租约），见 ClaimPendingAlerts
 	created_at TIMESTAMP NOT NULL,
 	updated_at TIMESTAMP NOT NULL
 );
@@ -325,6 +327,8 @@ func Open(dsn string) (*Store, error) {
 			return nil, err
 		}
 		sqlDB.SetMaxOpenConns(20)
+		// 空闲连接数默认只有 2：并发上报时其余连接用完即关、下次重建，压测中耗尽本机端口（TIME_WAIT）
+		sqlDB.SetMaxIdleConns(20)
 		sqlDB.SetConnMaxIdleTime(5 * time.Minute)
 		db = &DB{DB: sqlDB, d: dialectPostgres}
 	} else {
@@ -351,6 +355,9 @@ var addedColumns = []struct{ table, column, def string }{
 	{"alerts", "resolution_note", "TEXT NOT NULL DEFAULT ''"},
 	{"agents", "capabilities", "TEXT NOT NULL DEFAULT ''"},
 	{"alerts", "incident_id", "INTEGER NOT NULL DEFAULT 0"},
+	// 升级时已有告警视为已推送，避免升级后把历史告警重新推送一遍
+	{"alerts", "notified", "BOOLEAN NOT NULL DEFAULT TRUE"},
+	{"alerts", "notify_claimed_at", "TIMESTAMP"},
 	{"assets", "importance", "TEXT NOT NULL DEFAULT 'normal'"},
 	{"assets", "owner", "TEXT NOT NULL DEFAULT ''"},
 	{"assets", "tags", "TEXT NOT NULL DEFAULT ''"},
@@ -376,10 +383,18 @@ func initSchema(db *DB) error {
 			}
 		}
 	}
-	return nil
+	// 依赖补加列的索引，必须在补列之后创建
+	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS alerts_unnotified ON alerts(id) WHERE NOT notified`)
+	return err
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+// Close 先写完事件存储中尚在批处理的事件（ClickHouse），再关闭主库。
+func (s *Store) Close() error {
+	if c, ok := s.events.(interface{ Close() error }); ok {
+		_ = c.Close()
+	}
+	return s.db.Close()
+}
 
 func (s *Store) CreateTask(ctx context.Context, t model.ScanTask) error {
 	targets, _ := json.Marshal(t.Targets)
