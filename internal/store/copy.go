@@ -19,7 +19,7 @@ var copyTables = []struct {
 	{"enroll_tokens", true}, {"nodes", false}, {"vulns", true},
 	{"notify_channels", true}, {"notify_cursor", false}, {"audit_log", true},
 	{"honeypots", false}, {"honeypot_events", true}, {"simulations", false}, {"response_actions", false},
-	{"incidents", true}, {"incident_notes", true},
+	{"incidents", true}, {"incident_notes", true}, {"asset_groups", true},
 	{"intel_indicators", true}, {"intel_feeds", true}, {"intel_meta", false},
 }
 

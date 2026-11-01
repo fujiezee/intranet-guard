@@ -99,6 +99,10 @@ func New(cfg Config, st *store.Store) *Server {
 	s.mux.Handle("PATCH /api/v1/incidents/{id}", admin(s.updateIncident))
 	s.mux.Handle("POST /api/v1/incidents/{id}/notes", admin(s.addIncidentNote))
 	s.mux.Handle("PUT /api/v1/assets/{ip}/meta", admin(s.setAssetMeta))
+	s.mux.Handle("GET /api/v1/groups", viewer(s.listGroups))
+	s.mux.Handle("POST /api/v1/groups", admin(s.saveGroup))
+	s.mux.Handle("PUT /api/v1/groups/{id}", admin(s.saveGroup))
+	s.mux.Handle("DELETE /api/v1/groups/{id}", admin(s.deleteGroup))
 
 	s.mux.Handle("GET /api/v1/actions", viewer(s.listActions))
 	s.mux.Handle("POST /api/v1/actions", admin(s.createAction))

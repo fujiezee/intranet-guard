@@ -301,6 +301,14 @@ CREATE TABLE IF NOT EXISTS intel_meta (
 	version    INTEGER NOT NULL,
 	net_config TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS asset_groups (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	name       TEXT NOT NULL,
+	kind       TEXT NOT NULL,
+	members    TEXT NOT NULL,
+	note       TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMP NOT NULL
+);
 CREATE TABLE IF NOT EXISTS sessions (
 	token_hash TEXT PRIMARY KEY,
 	user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -650,6 +658,9 @@ func (s *Store) queryAssets(ctx context.Context, where string, args ...any) ([]m
 		assets[i].Honeypot = hp[assets[i].IP]
 	}
 	if err := s.scoreAssets(ctx, assets); err != nil {
+		return nil, err
+	}
+	if err := s.annotateGroups(ctx, assets); err != nil {
 		return nil, err
 	}
 	return assets, nil

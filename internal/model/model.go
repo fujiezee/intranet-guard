@@ -19,6 +19,7 @@ type Asset struct {
 	Importance string   `json:"importance,omitempty"` // normal / important / core
 	Owner      string   `json:"owner,omitempty"`
 	Tags       []string `json:"tags,omitempty"`
+	Groups     []string `json:"groups,omitempty"` // 所属资产组名称
 	// Risk 是 0-100 的风险分，RiskReasons 说明扣分项；只在资产列表 / 详情中计算
 	Risk        int       `json:"risk"`
 	RiskReasons []string  `json:"risk_reasons,omitempty"`
@@ -529,4 +530,20 @@ type IntelFeed struct {
 	Count     int        `json:"count"`
 	LastFetch *time.Time `json:"last_fetch,omitempty"`
 	LastError string     `json:"last_error,omitempty"`
+}
+
+// 资产组类型
+const (
+	GroupCluster = "cluster" // 集群：成员之间互相登录属于正常
+	GroupAdmin   = "admin"   // 运维跳板 / 自动化：成员登录任何主机都属于正常
+)
+
+// AssetGroup 按网段 / 地址把资产归组，用于展示和降低横向移动误报。
+type AssetGroup struct {
+	ID        int64     `json:"id"`
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind"`
+	Members   []string  `json:"members"` // IP 或 CIDR
+	Note      string    `json:"note,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
