@@ -104,10 +104,13 @@ Restart=always
 RestartSec=5
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=$STATE
 {{- if eq .Kind "agent"}}
+# 除状态目录外只开放攻击模拟自检需要写入的位置（/etc/cron.d 写只含注释的测试文件、/tmp 放测试程序），
+# 其余文件系统保持只读；不需要自检时可删除后两项（自检会显示“不适用”）
+ReadWritePaths=$STATE -/etc/cron.d -/tmp
 ProtectHome=read-only
 {{- else}}
+ReadWritePaths=$STATE
 ProtectHome=yes
 {{- end}}
 

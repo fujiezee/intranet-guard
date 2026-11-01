@@ -57,7 +57,7 @@ api PUT /honeypots/ci-probe '{"enabled":true,"services":[{"type":"http","port":1
 wait_for "探针上的蜜罐开始监听" 60 "api GET /honeypots | json '[h for h in d if h[\"probe_id\"]==\"ci-probe\" and h[\"status\"].get(\"18088\")==\"listening\"][0]'"
 # 用 127.0.0.2 作为来源模拟另一台主机（探针本机地址的访问会被忽略）
 curl -fsS --interface 127.0.0.2 -o /dev/null http://127.0.0.1:18088/admin || true
-curl -fsS --interface 127.0.0.2 -o /dev/null -d 'username=admin&password=Passw0rd' http://127.0.0.1:18088/login || true
+curl -sS --interface 127.0.0.2 -o /dev/null -d 'username=admin&password=Passw0rd' http://127.0.0.1:18088/login # 蜜罐会返回 401
 wait_for "蜜罐访问产生高危告警，关联到来源 127.0.0.2" 30 \
 	"api GET /alerts | json '[a for a in d if a[\"type\"]==\"honeypot\" and a[\"ip\"]==\"127.0.0.2\" and a[\"severity\"]==\"high\"][0]'"
 curl -fsS -o /dev/null http://127.0.0.1:18088/ || true
