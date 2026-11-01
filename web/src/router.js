@@ -19,6 +19,7 @@ const router = createRouter({
     { path: '/alerts', name: 'alerts', component: () => import('./views/Alerts.vue') },
     { path: '/nodes', name: 'nodes', component: () => import('./views/Nodes.vue'), meta: { admin: true } },
     { path: '/settings', name: 'settings', component: () => import('./views/Settings.vue'), meta: { admin: true } },
+    { path: '/help', name: 'help', component: () => import('./views/Help.vue') },
     { path: '/users', name: 'users', component: () => import('./views/Users.vue'), meta: { admin: true } },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],

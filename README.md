@@ -11,7 +11,7 @@ make release VERSION=0.1.0                       # 开发机：生成 dist/safe-
 tar -xzf safe-0.1.0-linux-amd64.tar.gz && cd safe-0.1.0-linux-amd64 && sudo ./install.sh
 ```
 
-安装完成会打印控制台地址和 admin 密码。探针 / Agent 在控制台"节点管理 → 生成注册令牌"后，
+安装完成会打印控制台地址和 admin 密码。控制台左侧"使用帮助"（或各页面右上角"帮助"）是完整的使用指南，内容同 [docs/GUIDE.md](docs/GUIDE.md)。探针 / Agent 在控制台"节点管理 → 生成注册令牌"后，
 复制页面给出的一行命令到目标机器执行即可（Linux 用 root 执行；Windows 以管理员身份在 Windows PowerShell 5.1 中执行）。完整步骤、检查清单和常见问题见 [docs/PILOT.md](docs/PILOT.md)。
 
 安装脚本的模拟测试（无需 root / systemd）：`scripts/test-install.sh`。

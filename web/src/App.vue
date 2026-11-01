@@ -19,10 +19,13 @@
         <el-menu-item v-if="auth.isAdmin" index="/nodes">节点管理</el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/users">用户管理</el-menu-item>
         <el-menu-item v-if="auth.isAdmin" index="/settings">推送与审计</el-menu-item>
+        <el-menu-item index="/help">使用帮助</el-menu-item>
       </el-menu>
     </el-aside>
     <el-container>
       <el-header class="header">
+        <!-- 跳到使用指南中当前页面对应的章节（章节锚点与路由名称一致） -->
+        <router-link v-if="route.name !== 'help'" class="help-link" :to="{ path: '/help', hash: `#${route.name}` }">帮助</router-link>
         <el-dropdown @command="onCommand">
           <span class="user">
             {{ auth.user?.username }}
@@ -93,6 +96,7 @@ async function changePassword() {
 </script>
 
 <style scoped>
+.help-link { margin-right: 16px; color: #409eff; font-size: 14px; text-decoration: none; }
 .layout { height: 100%; }
 .aside { background: #1f2d3d; }
 .aside .el-menu { border-right: none; }
