@@ -179,6 +179,8 @@ func main() {
 		Addr:              *addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
 	}
 	if *tlsInternal {
 		cert, err := ca.IssueServerCert(hosts, serverKey)
@@ -195,6 +197,8 @@ func main() {
 		Handler:           handler.NodeHandler(),
 		TLSConfig:         nodeTLS,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       2 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

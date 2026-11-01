@@ -207,13 +207,22 @@ func spaHandler(dir string) http.Handler {
 // NodeHandler 是节点接入端口的处理器，需配合 NodeTLSConfig 使用。
 func (s *Server) NodeHandler() http.Handler { return s.nodeMux }
 
+// 告警和事件含攻击者可控的文本，会话令牌存在 localStorage：即使出现 XSS，也不能加载外部脚本或把数据发到外部。
+// Element Plus 依赖内联样式。
+const contentSecurityPolicy = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; " +
+	"object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+
+const maxRequestBody = 64 << 20 // 与节点上报的上限一致
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Content-Security-Policy", contentSecurityPolicy)
 	if s.cfg.HSTS {
 		w.Header().Set("Strict-Transport-Security", "max-age=31536000")
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
 	s.mux.ServeHTTP(w, r)
 	slog.Debug("request", "method", r.Method, "path", r.URL.Path, "dur", time.Since(start))
 }
