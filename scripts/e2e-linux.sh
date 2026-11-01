@@ -103,17 +103,20 @@ systemctl start safe-agent
 wait_for "重新启动后恢复在线" 40 "api GET /agents | json '[a for a in d if a[\"id\"]==\"ci-agent\"][0][\"status\"]' | grep -qx online"
 
 step "处置：封禁 IP"
+# 封禁命名空间的地址 10.200.0.2（管理中心拒绝封禁回环地址），从命名空间里验证无法访问主机
 action() { api POST /actions "$1" | json 'd["id"]'; }
 action_status() { api GET /actions | json "[a for a in d if a['id']=='$1'][0]['status']"; }
-curl -sk -m 3 --interface 127.0.0.3 -o /dev/null "$CONSOLE/" && ok "封禁前 127.0.0.3 可以访问"
-ID=$(action '{"agent_id":"ci-agent","type":"block_ip","params":{"ip":"127.0.0.3","duration":"600"},"reason":"e2e"}')
+ip netns exec safeiso curl -sk -m 3 -o /dev/null https://10.200.0.3/ && ok "封禁前 10.200.0.2 可以访问主机"
+api POST /actions '{"agent_id":"ci-agent","type":"block_ip","params":{"ip":"127.0.0.3"},"reason":"e2e"}' >/dev/null 2>&1 &&
+	fail "允许了封禁回环地址" || ok "拒绝封禁回环地址"
+ID=$(action '{"agent_id":"ci-agent","type":"block_ip","params":{"ip":"10.200.0.2","duration":"600"},"reason":"e2e"}')
 wait_for "封禁完成" 60 "action_status $ID | grep -qx done"
 api GET /actions | json "[a for a in d if a['id']=='$ID'][0]['result']" | sed 's/^/    /'
-! curl -sk -m 3 --interface 127.0.0.3 -o /dev/null "$CONSOLE/" && ok "127.0.0.3 已被封禁" || fail "封禁未生效"
+! ip netns exec safeiso curl -sk -m 3 -o /dev/null https://10.200.0.3/ && ok "10.200.0.2 已被封禁" || fail "封禁未生效"
 curl -sk -m 3 -o /dev/null "$CONSOLE/" && ok "其他来源不受影响"
 UNDO=$(api POST "/actions/$ID/rollback" '{"reason":"e2e"}' | json 'd["id"]')
 wait_for "撤销封禁完成" 60 "action_status $UNDO | grep -qx done"
-curl -sk -m 3 --interface 127.0.0.3 -o /dev/null "$CONSOLE/" && ok "解除后 127.0.0.3 恢复访问" || fail "解除未生效"
+ip netns exec safeiso curl -sk -m 3 -o /dev/null https://10.200.0.3/ && ok "解除后恢复访问" || fail "解除未生效"
 [ "$(action_status "$ID")" = rolled_back ] && ok "原封禁动作标记为已撤销"
 
 step "处置：结束进程、隔离文件"
