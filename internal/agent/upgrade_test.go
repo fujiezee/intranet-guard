@@ -54,8 +54,7 @@ func TestRunUpgrade(t *testing.T) {
 
 	// 校验失败：不替换
 	body = fakeVersion(`echo "version=9.9.9 id=x ok"; exit 0`)
-	bad := cmd("upg-00000001", "9.9.9", body)
-	bad.Params["sha256"] = strings.Repeat("0", 64)
+	bad := cmd("upg-00000001", "9.9.9", []byte("签名时的内容与下载到的不同"))
 	if r := a.runUpgrade(bad); r.Status != "error" || !strings.Contains(r.Detail, "SHA-256") || !old() {
 		t.Errorf("checksum mismatch: %+v", r)
 	}
@@ -120,23 +119,23 @@ func TestRunUpgrade(t *testing.T) {
 	marker := filepath.Join(dir, "executed")
 	body = fakeVersion(`touch ` + marker + `; echo "version=9.9.9 id=x ok"; exit 0`)
 	_, attacker, _ := ed25519.GenerateKey(nil)
-	forged := cmd("upg-00000007", "9.9.9", body)
-	forged.Params["signature"] = signing.Sign(attacker, "9.9.9", "safe-agent-linux-amd64", forged.Params["sha256"])
-	unsigned := cmd("upg-00000008", "9.9.9", body)
+	forged := cmd("upg-00000007", "9.9.10", body)
+	forged.Params["signature"] = signing.Sign(attacker, "9.9.10", "safe-agent-linux-amd64", forged.Params["sha256"])
+	unsigned := cmd("upg-00000008", "9.9.10", body)
 	delete(unsigned.Params, "signature")
-	otherVersion := cmd("upg-00000009", "9.9.9", body)
-	otherVersion.Params["version"] = "9.9.10"
+	otherVersion := cmd("upg-00000009", "9.9.10", body)
+	otherVersion.Params["version"] = "9.9.11"
 	for _, c := range []model.AgentCommand{forged, unsigned, otherVersion} {
 		if r := a.runUpgrade(c); r.Status != "error" || !strings.Contains(r.Detail, "签名") {
 			t.Errorf("%s: %+v", c.ID, r)
 		}
 	}
-	saved := ReleaseKeys
+	keys := ReleaseKeys
 	ReleaseKeys = ""
-	if r := a.runUpgrade(cmd("upg-0000000a", "9.9.9", body)); r.Status != "error" {
+	if r := a.runUpgrade(cmd("upg-0000000a", "9.9.10", body)); r.Status != "error" {
 		t.Errorf("build without public key accepted upgrade: %+v", r)
 	}
-	ReleaseKeys = saved
+	ReleaseKeys = keys
 	if _, err := os.Stat(marker); err == nil {
 		t.Error("unsigned program was executed")
 	}
