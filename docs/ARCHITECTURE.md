@@ -423,10 +423,10 @@ Agent 以 DaemonSet 部署（控制台"节点管理 → 生成 Agent 令牌 → 
 
 **升级流程**：管理中心在 Agent 上报的回复中下发升级指令（版本、文件名、SHA-256）→ Agent 经已有的双向 TLS 通道下载、
 校验 → 运行新版本的 `-self-test`（能启动、能用本机证书通过 `/api/v1/agent/whoami` 认证、输出的版本号正确）→
-原程序改名为 `.prev`、新程序放到原位置、写入 `upgrade-pending` → 以退出码 75 退出，由 systemd / Windows 服务 /
-Kubernetes 重新启动为新版本 → 新版本首次上报成功后删除 `.prev` 与 `upgrade-pending`，管理中心看到新版本号即判定成功。
+原程序改名为 `.prev`、新程序放到原位置、写入 `upgrade-pending` → 以退出码 75 退出，由 systemd（没有 systemd 时由
+`/var/lib/safe-agent/bin/run.sh` 守护循环）/ Windows 服务 / Kubernetes 重新启动为新版本 → 新版本首次上报成功后删除 `.prev` 与 `upgrade-pending`，管理中心看到新版本号即判定成功。
 
-- **自动回退**：Linux 的 systemd 单元与 K8s 容器启动前运行 `upgrade-guard.sh`，每次启动计数；连续 3 次没能完成首次上报
+- **自动回退**：Linux 的 systemd 单元（或 sysvinit / OpenRC 下的 `run.sh`）与 K8s 容器启动前运行 `upgrade-guard.sh`，每次启动计数；连续 3 次没能完成首次上报
   时换回 `.prev` 并留下 `upgrade-rolledback`，旧版本启动后向管理中心报告失败。Windows 只有升级前的自检，另有 10 分钟超时判定。
 - **安装位置**：Linux Agent 程序位于 `/var/lib/safe-agent/bin/`（systemd 沙箱中可写），`/usr/local/bin/safe-agent` 为链接；
   K8s 位于节点的 `/var/lib/safe-agent-k8s/bin/`；Windows 位于 `Program Files\safe-agent`。

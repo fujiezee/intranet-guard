@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -14,7 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"safe/internal/model"
 	"safe/internal/pki"
 )
 
@@ -245,5 +248,84 @@ func TestNodeIndex(t *testing.T) {
 	// 其他路径仍是 404
 	if resp, _ := http.Get(nodes.URL + "/nope"); resp.StatusCode != 404 {
 		t.Errorf("/nope: %d", resp.StatusCode)
+	}
+}
+
+func TestInstallByToken(t *testing.T) {
+	_, _, st := newTestServerWithStore(t)
+	srv := New(Config{InstallPin: testPin, NodePort: 8443}, st)
+	nodes := httptest.NewServer(srv.NodeHandler())
+	defer nodes.Close()
+
+	fp := strings.Repeat("ab", 32)
+	newToken := func(kind model.NodeKind, maxUses int, ttl time.Duration) string {
+		t.Helper()
+		secret := fmt.Sprintf("%032x", time.Now().UnixNano())
+		if _, err := st.CreateEnrollToken(context.Background(), model.EnrollToken{Kind: kind, MaxUses: maxUses,
+			ExpiresAt: time.Now().Add(ttl)}, hashToken(secret)); err != nil {
+			t.Fatal(err)
+		}
+		return secret + "." + fp
+	}
+	get := func(path string) (int, string) {
+		t.Helper()
+		req, _ := http.NewRequest("GET", nodes.URL+path, nil)
+		req.Host = "10.1.2.3:8443"
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b)
+	}
+	syntax := func(name, script string) {
+		t.Helper()
+		f := filepath.Join(t.TempDir(), name)
+		os.WriteFile(f, []byte(script), 0o644)
+		if out, err := exec.Command("sh", "-n", f).CombinedOutput(); err != nil {
+			t.Errorf("%s syntax: %v\n%s", name, err, out)
+		}
+		checkShellVars(t, name, script)
+	}
+
+	// 探针：令牌和网段名写入脚本，节点类型取自令牌
+	probe := newToken(model.NodeProbe, 1, time.Hour)
+	code, script := get("/i/" + probe + "?id=office-3f")
+	if code != http.StatusOK || !strings.Contains(script, "KIND='probe'") ||
+		!strings.Contains(script, "SAFE_ENROLL_TOKEN=${SAFE_ENROLL_TOKEN:-"+probe+"}") ||
+		!strings.Contains(script, "SAFE_PROBE_ID=${SAFE_PROBE_ID:-office-3f}") || !strings.Contains(script, "SERVER='https://10.1.2.3:8443'") {
+		t.Fatalf("probe script: %d\n%s", code, script)
+	}
+	syntax("probe.sh", script)
+
+	// Agent 不带 id：用主机名作为节点 ID
+	agent := newToken(model.NodeAgent, 5, time.Hour)
+	code, script = get("/i/" + agent)
+	if code != http.StatusOK || !strings.Contains(script, "KIND='agent'") || strings.Contains(script, "SAFE_AGENT_ID=${") ||
+		!strings.Contains(script, "SAFE_ENROLL_TOKEN=${SAFE_ENROLL_TOKEN:-"+agent+"}") {
+		t.Fatalf("agent script: %d\n%s", code, script)
+	}
+	syntax("agent.sh", script)
+
+	// 过期的令牌：脚本照样返回（已注册的节点可用同一条命令升级），但不含令牌，未注册时提示重新生成
+	expired := newToken(model.NodeAgent, 1, -time.Hour)
+	code, script = get("/i/" + expired)
+	if code != http.StatusOK || strings.Contains(script, expired) || !strings.Contains(script, "已过期或已用完") {
+		t.Fatalf("expired token script: %d\n%s", code, script)
+	}
+	syntax("expired.sh", script)
+
+	// 不存在的令牌：返回一段报错退出的脚本，而不是让 sh 读到空内容
+	code, script = get("/i/" + strings.Repeat("0", 32) + "." + fp)
+	if code != http.StatusOK || !strings.Contains(script, "exit 1") || !strings.Contains(script, "令牌不存在") {
+		t.Fatalf("unknown token: %d\n%s", code, script)
+	}
+
+	// 令牌和 id 会写进脚本，格式不对时拒绝
+	for _, bad := range []string{"/i/" + probe + "?id=a;reboot", "/i/" + probe + "?id=-x", "/i/abc", "/i/" + strings.ToUpper(probe)} {
+		if code, _ := get(bad); code != http.StatusNotFound {
+			t.Errorf("GET %s: %d", bad, code)
+		}
 	}
 }
