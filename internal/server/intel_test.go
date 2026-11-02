@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -54,6 +55,19 @@ func TestThreatIntel(t *testing.T) {
 	if list["evil.com"].Source != "自定义" || list["safe-sim.example.com"].Value == "" || len(list) != 3 {
 		t.Errorf("probe intel: %+v", list)
 	}
+	// 下发内容按版本缓存为 gzip：不接受 gzip 的客户端得到解压后的同样内容
+	req, _ := http.NewRequest("GET", ts.URL+"/api/v1/probe/intel?probe_id=seg-a", nil)
+	req.Header.Set("Authorization", "Bearer "+probeToken)
+	req.Header.Set("Accept-Encoding", "identity")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var plain probeIntel
+	if err := json.NewDecoder(resp.Body).Decode(&plain); err != nil || resp.Header.Get("Content-Encoding") != "" || len(plain.Indicators) != 3 {
+		t.Errorf("identity encoding: %v %q %d", err, resp.Header.Get("Content-Encoding"), len(plain.Indicators))
+	}
+	resp.Body.Close()
 	if code := call(t, ts, adminToken, "POST", "/api/v1/intel/indicators", map[string]any{"text": "nothing here", "severity": "high"}, nil); code != http.StatusBadRequest {
 		t.Errorf("empty import: %d", code)
 	}

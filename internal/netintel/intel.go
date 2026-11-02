@@ -2,6 +2,7 @@ package netintel
 
 import (
 	"net/netip"
+	"slices"
 	"strings"
 )
 
@@ -17,13 +18,9 @@ type Indicator struct {
 // Intel 是用于匹配的情报集合，构建后只读，可以在多个 goroutine 中共享。
 type Intel struct {
 	ips      map[netip.Addr]Indicator
-	prefixes []prefixIndicator
+	prefixes map[netip.Prefix]Indicator
+	bits     []int // prefixes 中出现过的掩码长度，从长到短
 	domains  map[string]Indicator
-}
-
-type prefixIndicator struct {
-	prefix netip.Prefix
-	ind    Indicator
 }
 
 // specialUse 是内网和特殊用途地址段（RFC 6890 等）。公开情报源常把它们列为 bogon，
@@ -67,7 +64,7 @@ func SpecialUseAddr(a netip.Addr) bool {
 
 // NewIntel 构建情报集合，无法解析的条目和内网地址被忽略（修复前导入的内网网段也不再命中）。
 func NewIntel(list []Indicator) *Intel {
-	in := &Intel{ips: map[netip.Addr]Indicator{}, domains: map[string]Indicator{}}
+	in := &Intel{ips: map[netip.Addr]Indicator{}, prefixes: map[netip.Prefix]Indicator{}, domains: map[string]Indicator{}}
 	for _, ind := range list {
 		switch ind.Type {
 		case "ip":
@@ -76,7 +73,12 @@ func NewIntel(list []Indicator) *Intel {
 			}
 		case "cidr":
 			if p, err := netip.ParsePrefix(ind.Value); err == nil && !SpecialUse(p) {
-				in.prefixes = append(in.prefixes, prefixIndicator{p.Masked(), ind})
+				if _, dup := in.prefixes[p.Masked()]; !dup {
+					in.prefixes[p.Masked()] = ind
+				}
+				if !slices.Contains(in.bits, p.Bits()) {
+					in.bits = append(in.bits, p.Bits())
+				}
 			}
 		case "domain":
 			if d := NormalizeDomain(ind.Value); d != "" {
@@ -84,6 +86,8 @@ func NewIntel(list []Indicator) *Intel {
 			}
 		}
 	}
+	slices.Sort(in.bits)
+	slices.Reverse(in.bits)
 	return in
 }
 
@@ -95,7 +99,8 @@ func (in *Intel) Len() int {
 	return len(in.ips) + len(in.prefixes) + len(in.domains)
 }
 
-// MatchIP 返回命中的情报。网段情报通常很少，线性查找即可。
+// MatchIP 返回命中的情报，网段之间取最长匹配。公开情报源有数千个网段，
+// 按掩码长度逐个查表（最多几十次），而不是逐条比较。
 func (in *Intel) MatchIP(a netip.Addr) (Indicator, bool) {
 	if in == nil || !a.IsValid() {
 		return Indicator{}, false
@@ -103,9 +108,13 @@ func (in *Intel) MatchIP(a netip.Addr) (Indicator, bool) {
 	if ind, ok := in.ips[a]; ok {
 		return ind, true
 	}
-	for _, p := range in.prefixes {
-		if p.prefix.Contains(a) {
-			return p.ind, true
+	for _, bits := range in.bits {
+		if bits > a.BitLen() {
+			continue
+		}
+		p, _ := a.Prefix(bits)
+		if ind, ok := in.prefixes[p]; ok {
+			return ind, true
 		}
 	}
 	return Indicator{}, false

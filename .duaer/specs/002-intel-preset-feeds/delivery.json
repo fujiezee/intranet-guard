@@ -1,0 +1,17 @@
+{
+  "status": "accepted",
+  "verification": [
+    "Preset feeds fetched live through the console (Add + Add all): Spamhaus DROP 1753, Feodo Tracker 5, Emerging Threats 542, FireHOL level1 4639, CINS Army 15000, blocklist.de 23558, Phishing Army 151717; 197,214 indicators in total, no fetch errors",
+    "Real probe enrolled against that server loaded 195,295 unique indicators",
+    "MatchIP with 6,392 real Spamhaus DROP + FireHOL prefixes: 26 us/op before, 0.23 us/op after; TestIntelMatchPrefixes checks 5,000 random addresses against a brute-force longest-prefix scan",
+    "Feed refresh of Phishing Army (151,717 domains): PostgreSQL 61 s -> 2.6 s, SQLite 1.8 s -> 0.9 s",
+    "Probe intel payload with all presets: 37.8 MB JSON rebuilt per request -> 1.5 MB gzip built once per version",
+    "go vet / gofmt clean; go test -race (SQLite), PostgreSQL 17, PostgreSQL + ClickHouse 25.8: 18 packages ok each",
+    "web check:guide, check:i18n, check:refs, build, npm audit: pass; govulncheck: no affected code",
+    "UI checked in Chinese and English (screenshots reviewed)"
+  ],
+  "waivers": [
+    ".duaer/memory/testing.md does not exist in this repo; used the CI test matrix (.github/workflows/ci.yml) as the required level",
+    "Each feed refresh still bumps the intel version even when its contents are unchanged, so probes re-download (now 1.5 MB gzip) after each refresh; left as is"
+  ]
+}

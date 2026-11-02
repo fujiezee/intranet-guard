@@ -62,6 +62,7 @@ type Server struct {
 	nodeMux *http.ServeMux // 节点接入（mTLS）
 	limiter *loginLimiter
 	release releaseCache // Agent 升级用的版本清单与策略缓存
+	intel   intelPayload // 下发给探针的情报（gzip），按情报版本缓存
 }
 
 func New(cfg Config, st *store.Store) *Server {

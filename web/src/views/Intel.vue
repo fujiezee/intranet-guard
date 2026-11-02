@@ -38,7 +38,7 @@
         <el-table :data="feeds" stripe :empty-text="t('没有订阅源')">
           <el-table-column prop="name" :label="t('名称')" width="160" />
           <el-table-column :label="t('地址')" min-width="260"><template #default="{ row }"><span class="mono small">{{ row.url }}</span></template></el-table-column>
-          <el-table-column :label="t('级别')" width="70"><template #default="{ row }"><SeverityTag :severity="row.severity" /></template></el-table-column>
+          <el-table-column :label="t('级别')" width="90"><template #default="{ row }"><SeverityTag :severity="row.severity" /></template></el-table-column>
           <el-table-column prop="count" :label="t('条目')" width="80" />
           <el-table-column :label="t('最近拉取')" width="200">
             <template #default="{ row }">
@@ -47,7 +47,7 @@
               <div v-if="row.last_error" class="err">{{ row.last_error }}</div>
             </template>
           </el-table-column>
-          <el-table-column :label="t('启用')" width="70">
+          <el-table-column :label="t('启用')" width="90">
             <template #default="{ row }">
               <el-switch :model-value="row.enabled" :disabled="!auth.isAdmin" @change="(v) => toggle(row, v)" />
             </template>
@@ -68,10 +68,25 @@
           </el-select>
           <el-button @click="addFeed">{{ t('添加并启用') }}</el-button>
         </div>
-        <p class="sub">
-          {{ t('常用的公开情报源（请自行评估可信度与使用条款）：') }}
-          <el-link v-for="p in presets" :key="p.url" type="primary" :underline="false" class="preset" @click="Object.assign(feedForm, p)">{{ p.name }}</el-link>
-        </p>
+
+        <template v-if="auth.isAdmin">
+          <div class="preset-head">
+            <h4>{{ t('推荐订阅源') }}</h4>
+            <span class="sub">{{ t('免费公开情报源，请自行评估可信度与使用条款') }}</span>
+            <el-button size="small" :disabled="!presets.some((p) => !added(p))" :loading="addingAll" @click="addAll">{{ t('全部添加') }}</el-button>
+          </div>
+          <el-table :data="presets" size="small">
+            <el-table-column prop="name" :label="t('名称')" width="200" />
+            <el-table-column prop="desc" :label="t('说明')" min-width="260" />
+            <el-table-column :label="t('级别')" width="70"><template #default="{ row }"><SeverityTag :severity="row.severity" /></template></el-table-column>
+            <el-table-column width="90">
+              <template #default="{ row }">
+                <span v-if="added(row)" class="sub">{{ t('已添加') }}</span>
+                <el-button v-else size="small" link type="primary" :loading="adding === row.url" @click="addPreset(row)">{{ t('添加') }}</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
       </el-tab-pane>
 
       <el-tab-pane :label="t('分析参数')" name="config">
@@ -121,10 +136,15 @@ import { formatTime } from '../format'
 import SeverityTag from '../components/SeverityTag.vue'
 
 const typeNames = { ip: 'IP', cidr: t('网段'), domain: t('域名') }
+// 均为无需注册的纯文本列表（2026-11 验证可拉取并解析）。abuse.ch 的 URLhaus / ThreatFox 现需注册密钥，未列入。
 const presets = [
-  { name: 'Feodo Tracker（C2 IP）', url: 'https://feodotracker.abuse.ch/downloads/ipblocklist.txt', severity: 'high' },
-  { name: t('URLhaus（恶意域名）'), url: 'https://urlhaus.abuse.ch/downloads/hostfile/', severity: 'medium' },
-  { name: t('ThreatFox（IOC 域名）'), url: 'https://threatfox.abuse.ch/downloads/hostfile/', severity: 'high' },
+  { name: 'Spamhaus DROP', desc: t('被劫持或专供犯罪使用的网段，约 1,800 个'), url: 'https://www.spamhaus.org/drop/drop.txt', severity: 'high' },
+  { name: 'Feodo Tracker', desc: t('僵尸网络 C2 服务器 IP，条目少但准确'), url: 'https://feodotracker.abuse.ch/downloads/ipblocklist.txt', severity: 'high' },
+  { name: 'Emerging Threats', desc: t('已失陷主机 IP，约 500 个'), url: 'https://rules.emergingthreats.net/blockrules/compromised-ips.txt', severity: 'medium' },
+  { name: 'FireHOL level1', desc: t('多个情报源汇总的恶意网段，约 4,600 个'), url: 'https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset', severity: 'medium' },
+  { name: 'CINS Army', desc: t('恶意扫描和攻击来源 IP，约 1.5 万个'), url: 'https://cinsscore.com/list/ci-badguys.txt', severity: 'medium' },
+  { name: 'blocklist.de', desc: t('暴力破解和攻击来源 IP，约 2.3 万个'), url: 'https://lists.blocklist.de/lists/all.txt', severity: 'medium' },
+  { name: 'Phishing Army', desc: t('钓鱼网站域名，约 15 万个'), url: 'https://phishing.army/download/phishing_army_blocklist.txt', severity: 'medium' },
 ]
 
 const tab = ref('list')
@@ -135,6 +155,8 @@ const simDomain = ref('')
 const feeds = ref([])
 const loading = ref(false)
 const refreshing = ref(0)
+const adding = ref('')
+const addingAll = ref(false)
 const importDialog = ref(false)
 const importForm = reactive({ text: '', severity: 'high', note: '' })
 const feedForm = reactive({ name: '', url: '', severity: 'high' })
@@ -189,6 +211,34 @@ async function addFeed() {
   load()
 }
 
+const added = (p) => feeds.value.some((f) => f.url === p.url)
+
+async function addPreset(p) {
+  adding.value = p.url
+  try {
+    await api.createFeed({ name: p.name, url: p.url, severity: p.severity, enabled: true })
+    ElMessage.success(t('已添加，正在后台拉取'))
+    await load()
+    setTimeout(load, 5000)
+  } finally {
+    adding.value = ''
+  }
+}
+
+async function addAll() {
+  addingAll.value = true
+  try {
+    for (const p of presets.filter((p) => !added(p))) {
+      await api.createFeed({ name: p.name, url: p.url, severity: p.severity, enabled: true })
+    }
+    ElMessage.success(t('已添加，正在后台拉取'))
+    await load()
+    setTimeout(load, 5000)
+  } finally {
+    addingAll.value = false
+  }
+}
+
 async function toggle(row, enabled) {
   await api.updateFeed(row.id, enabled)
   load()
@@ -239,6 +289,8 @@ onMounted(() => {
 .small { font-size: 12px; }
 .err { color: #f56c6c; font-size: 12px; }
 .feed-form { display: flex; gap: 8px; margin-top: 12px; }
-.preset { margin-left: 10px; font-size: 12px; }
+.preset-head { display: flex; align-items: center; gap: 12px; margin: 24px 0 8px; }
+.preset-head h4 { margin: 0; font-size: 14px; }
+.preset-head .el-button { margin-left: auto; }
 .import-opts { display: flex; gap: 8px; margin-top: 8px; }
 </style>
