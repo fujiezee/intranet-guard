@@ -26,17 +26,56 @@ type prefixIndicator struct {
 	ind    Indicator
 }
 
-// NewIntel 构建情报集合，无法解析的条目被忽略。
+// specialUse 是内网和特殊用途地址段（RFC 6890 等）。公开情报源常把它们列为 bogon，
+// 作为情报会让所有内网地址都命中。文档示例段（TEST-NET-1/2/3）不在其中。
+var specialUse = []netip.Prefix{
+	netip.MustParsePrefix("0.0.0.0/8"),
+	netip.MustParsePrefix("10.0.0.0/8"),
+	netip.MustParsePrefix("100.64.0.0/10"), // CGNAT
+	netip.MustParsePrefix("127.0.0.0/8"),
+	netip.MustParsePrefix("169.254.0.0/16"),
+	netip.MustParsePrefix("172.16.0.0/12"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.168.0.0/16"),
+	netip.MustParsePrefix("198.18.0.0/15"), // 基准测试段，也常被代理软件用作虚拟 IP
+	netip.MustParsePrefix("224.0.0.0/4"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	netip.MustParsePrefix("::/127"), // 未指定地址和 ::1
+	netip.MustParsePrefix("fc00::/7"),
+	netip.MustParsePrefix("fe80::/10"),
+	netip.MustParsePrefix("ff00::/8"),
+}
+
+// SpecialUse 判断网段是否与内网或特殊用途地址段重叠，这样的条目不能作为情报。
+func SpecialUse(p netip.Prefix) bool {
+	if p.Addr().Is4In6() && p.Bits() >= 96 {
+		p = netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96)
+	}
+	for _, s := range specialUse {
+		if s.Overlaps(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// SpecialUseAddr 判断单个地址是否属于内网或特殊用途地址段。
+func SpecialUseAddr(a netip.Addr) bool {
+	a = a.Unmap()
+	return SpecialUse(netip.PrefixFrom(a, a.BitLen()))
+}
+
+// NewIntel 构建情报集合，无法解析的条目和内网地址被忽略（修复前导入的内网网段也不再命中）。
 func NewIntel(list []Indicator) *Intel {
 	in := &Intel{ips: map[netip.Addr]Indicator{}, domains: map[string]Indicator{}}
 	for _, ind := range list {
 		switch ind.Type {
 		case "ip":
-			if a, err := netip.ParseAddr(ind.Value); err == nil {
+			if a, err := netip.ParseAddr(ind.Value); err == nil && !SpecialUseAddr(a) {
 				in.ips[a.Unmap()] = ind
 			}
 		case "cidr":
-			if p, err := netip.ParsePrefix(ind.Value); err == nil {
+			if p, err := netip.ParsePrefix(ind.Value); err == nil && !SpecialUse(p) {
 				in.prefixes = append(in.prefixes, prefixIndicator{p.Masked(), ind})
 			}
 		case "domain":

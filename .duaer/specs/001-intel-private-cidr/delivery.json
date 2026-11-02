@@ -1,0 +1,15 @@
+{
+  "status": "accepted",
+  "verification": [
+    "go vet ./... and gofmt: clean",
+    "go test -race ./... (SQLite): 18 packages ok",
+    "go test ./... with SAFE_TEST_PG_DSN (postgres:17): 18 packages ok",
+    "go test ./... with SAFE_TEST_PG_DSN + SAFE_TEST_CH_URL (clickhouse-server:25.8): 18 packages ok",
+    "Real FireHOL level1: 4639 indicators kept, none contain 10/8, 172.16/12, 192.168/16, 100.64/10, 127/8 or 169.254/16 addresses",
+    "Real Spamhaus DROP: 1753 indicators, unchanged",
+    "web check:guide and check:i18n: pass"
+  ],
+  "waivers": [
+    ".duaer/memory/testing.md does not exist in this repo; used the CI test matrix (.github/workflows/ci.yml job 'test') as the required level"
+  ]
+}

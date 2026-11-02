@@ -22,6 +22,10 @@ func TestParseIntelList(t *testing.T) {
 "1","c2.example.net","online"
 10.0.0.5
 1.0.0.0/4
+10.0.0.0/8 ; FireHOL level1 中的 bogon 网段
+172.16.0.0/12
+100.64.0.5
+fd00::/8
 localhost
 evil.com
 not a valid line !!
