@@ -59,6 +59,35 @@ func TestIntelMatch(t *testing.T) {
 	}
 }
 
+func TestSpecialUse(t *testing.T) {
+	for v, want := range map[string]bool{
+		"10.0.0.0/8": true, "10.20.0.0/16": true, "172.0.0.0/8": true, "192.168.1.0/24": true, "100.64.0.0/10": true,
+		"169.254.0.0/16": true, "0.0.0.0/8": true, "224.0.0.0/3": true, "198.18.0.0/15": true, "::ffff:10.0.0.0/104": true,
+		"fd00::/8": true, "fe80::/64": true, "::1/128": true,
+		"8.0.0.0/8": false, "198.51.100.0/24": false, "203.0.113.9/32": false, "2001:db8::/32": false, "::ffff:8.8.8.0/120": false,
+	} {
+		if got := SpecialUse(netip.MustParsePrefix(v)); got != want {
+			t.Errorf("SpecialUse(%s) = %v", v, got)
+		}
+	}
+	for v, want := range map[string]bool{"10.1.2.3": true, "::ffff:192.168.0.1": true, "100.100.1.1": true, "203.0.113.9": false, "2001:db8::1": false} {
+		if got := SpecialUseAddr(netip.MustParseAddr(v)); got != want {
+			t.Errorf("SpecialUseAddr(%s) = %v", v, got)
+		}
+	}
+	// 修复前已经导入的内网条目：构建时忽略，内网地址不再命中
+	in := NewIntel([]Indicator{{Type: "cidr", Value: "10.0.0.0/8"}, {Type: "cidr", Value: "172.0.0.0/8"}, {Type: "ip", Value: "192.168.1.1"},
+		{Type: "cidr", Value: "198.51.100.0/24"}})
+	if in.Len() != 1 {
+		t.Errorf("len = %d", in.Len())
+	}
+	for _, v := range []string{"10.1.2.3", "172.16.5.5", "192.168.1.1"} {
+		if _, ok := in.MatchIP(netip.MustParseAddr(v)); ok {
+			t.Errorf("internal address %s matched", v)
+		}
+	}
+}
+
 func dns(src, dst string, name string, resp bool, rcode string, at time.Time) Event {
 	return Event{Type: "dns", SrcIP: netip.MustParseAddr(src), DstIP: netip.MustParseAddr(dst), QName: name, Response: resp, RCode: rcode, Time: at}
 }

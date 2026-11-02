@@ -333,13 +333,14 @@ func ParseIndicator(v string) (netintel.Indicator, bool) {
 	v = strings.TrimSpace(v)
 	if a, err := netip.ParseAddr(v); err == nil {
 		a = a.Unmap()
-		if a.IsLoopback() || a.IsUnspecified() || a.IsPrivate() {
+		if netintel.SpecialUseAddr(a) {
 			return netintel.Indicator{}, false // hosts 文件的 0.0.0.0 / 127.0.0.1 前缀、内网地址不作为情报
 		}
 		return netintel.Indicator{Type: "ip", Value: a.String()}, true
 	}
 	if p, err := netip.ParsePrefix(v); err == nil {
-		if p.Bits() < 8 { // 太大的网段几乎必然误报
+		// 太大的网段几乎必然误报；情报源列出的 bogon 网段（10.0.0.0/8 等）会让所有内网地址命中
+		if p.Bits() < 8 || netintel.SpecialUse(p) {
 			return netintel.Indicator{}, false
 		}
 		return netintel.Indicator{Type: "cidr", Value: p.Masked().String()}, true
