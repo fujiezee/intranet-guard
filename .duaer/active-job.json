@@ -1,4 +1,4 @@
 {
-  "spec": ".duaer/specs/001-intel-private-cidr",
-  "branch": "fix/intel-private-cidr"
+  "spec": ".duaer/specs/002-intel-preset-feeds",
+  "branch": "feat/intel-preset-feeds"
 }
