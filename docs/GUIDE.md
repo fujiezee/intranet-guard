@@ -232,6 +232,7 @@ systemd、sysvinit（MX Linux、Devuan、CentOS 6 等）和 OpenRC（Alpine 等�
 | 安装为系统服务 | 创建并启动 `safe-agent` 服务（开机自启，限制 CPU 20%、内存 256M）。没有 systemd 的系统用 `/etc/init.d/safe-agent`，进程退出后自动重启，日志在 `/var/log/safe-agent.log`，只降低调度优先级、没有 CPU / 内存上限 |
 
 **批量安装**：同一条命令可以在多台服务器上执行（不超过令牌的使用次数），可通过 Ansible、堡垒机批量执行等现有工具下发。
+已装 Agent 的主机上通过 ssh / Ansible 执行安装命令，会命中"下载并执行"规则；命令中的公钥指纹与本管理中心一致、且没有拼接其他命令时，只记一条低级告警，不按高危推送。
 主机名会作为 Agent 名称，重名时把命令末尾的 `sudo sh` 改成 `sudo SAFE_AGENT_ID='名称' sh`。
 
 **Windows**：弹窗中选 Windows，以管理员身份打开 **Windows PowerShell**（5.1，不是 PowerShell 7）粘贴执行，自动开启安全审计并安装为系统服务。

@@ -149,7 +149,13 @@ func (s *Store) detectHostAlerts(ctx context.Context, hostIP, agentID string, ev
 		case model.EventSuspiciousProcess:
 			alerts = append(alerts, alert.SuspiciousProcess(hostIP, agentID, ev))
 		case model.EventSuspiciousCommand:
-			alerts = append(alerts, alert.SuspiciousCommand(hostIP, agentID, ev))
+			a := alert.SuspiciousCommand(hostIP, agentID, ev)
+			// 执行本管理中心的一键安装命令（ssh / Ansible 批量下发时）同样命中"下载并执行"：保留记录，降为低级，不推送高危
+			if alert.IsInstallCommand(ev.Detail, s.loadInstallPin()) {
+				a.Alert.Severity = model.SeverityLow
+				a.Alert.Message += "（本管理中心的一键安装命令，公钥指纹一致）"
+			}
+			alerts = append(alerts, a)
 		case model.EventWebshell:
 			alerts = append(alerts, alert.Webshell(hostIP, agentID, ev))
 		case model.EventAccountChange:

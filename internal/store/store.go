@@ -8,6 +8,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -27,6 +28,18 @@ type Store struct {
 	intel    intelCache    // 管理中心侧情报匹配用的缓存，按情报版本刷新
 	logins   loginWindow   // 横向移动检测
 	failures failureWindow // 暴力破解检测
+	// installPin 是本管理中心安装命令中的公钥指纹，用于识别执行一键安装命令产生的"下载并执行"事件
+	installPin atomic.Pointer[string]
+}
+
+// SetInstallPin 设置本管理中心的公钥指纹（curl --pinnedpubkey 的值），由管理中心启动时调用。
+func (s *Store) SetInstallPin(pin string) { s.installPin.Store(&pin) }
+
+func (s *Store) loadInstallPin() string {
+	if p := s.installPin.Load(); p != nil {
+		return *p
+	}
+	return ""
 }
 
 const schema = `

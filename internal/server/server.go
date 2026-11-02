@@ -67,6 +67,9 @@ type Server struct {
 func New(cfg Config, st *store.Store) *Server {
 	s := &Server{cfg: cfg, store: st, mux: http.NewServeMux(), nodeMux: http.NewServeMux(),
 		limiter: &loginLimiter{failures: map[string][]time.Time{}}}
+	if st != nil && cfg.InstallPin != "" {
+		st.SetInstallPin(cfg.InstallPin)
+	}
 
 	admin := func(h http.HandlerFunc) http.Handler { return s.requireRole(model.RoleAdmin, h) }
 	viewer := func(h http.HandlerFunc) http.Handler { return s.requireRole(model.RoleViewer, h) }

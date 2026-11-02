@@ -24,6 +24,10 @@ func attachToIncident(ctx context.Context, tx *Tx, alertID int64, a model.Alert,
 	if !ok || a.IP == "" {
 		return nil
 	}
+	// 低级的可疑命令只来自执行本管理中心的一键安装命令（见 detectHostAlerts），不是攻击阶段
+	if a.Type == model.AlertSuspiciousCommand && a.Severity == model.SeverityLow {
+		return nil
+	}
 	var id int64
 	var sev model.Severity
 	var stages string
