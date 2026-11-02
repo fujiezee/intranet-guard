@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,6 +13,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"safe/internal/model"
@@ -271,18 +274,51 @@ type probeIntel struct {
 	Indicators []netintel.Indicator `json:"indicators"`
 }
 
+// intelPayload 缓存下发给探针的情报。订阅推荐源后有约 20 万条（JSON 约 38 MB，gzip 后约 1.5 MB），
+// 情报版本变化时所有探针几乎同时来拉取：只生成一次，压缩后共用。
+type intelPayload struct {
+	mu      sync.Mutex
+	version int64
+	gz      []byte
+}
+
 func (s *Server) probeIntel(w http.ResponseWriter, r *http.Request) {
 	v, err := s.store.IntelVersion(r.Context())
 	if err != nil {
 		writeInternal(w, err)
 		return
 	}
-	list, err := s.store.AllIndicators(r.Context())
+	s.intel.mu.Lock()
+	if s.intel.gz == nil || s.intel.version != v {
+		list, err := s.store.AllIndicators(r.Context())
+		if err != nil {
+			s.intel.mu.Unlock()
+			writeInternal(w, err)
+			return
+		}
+		var buf bytes.Buffer
+		zw := gzip.NewWriter(&buf)
+		_ = json.NewEncoder(zw).Encode(probeIntel{Version: v, Indicators: list})
+		_ = zw.Close()
+		s.intel.gz, s.intel.version = buf.Bytes(), v
+	}
+	body := s.intel.gz
+	s.intel.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Add("Vary", "Accept-Encoding")
+	// 探针使用 Go 默认的 HTTP 客户端，会自动请求 gzip 并解压
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = w.Write(body)
+		return
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(body))
 	if err != nil {
 		writeInternal(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, probeIntel{Version: v, Indicators: list})
+	_, _ = io.Copy(w, zr)
 }
 
 type netFindingReport struct {
