@@ -146,6 +146,8 @@ type HostEvent struct {
 	Detail  string        `json:"detail,omitempty"`
 	// Severity 是 Agent 侧规则给出的级别（high / medium），只用于生成告警，不持久化。
 	Severity string `json:"severity,omitempty"`
+	// SimulationID 标记攻击模拟自检注入的事件，只由 Agent 的自检动作设置，日志内容无法影响，不持久化。
+	SimulationID string `json:"simulation_id,omitempty"`
 }
 
 type AgentStatus string

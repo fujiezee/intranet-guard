@@ -33,35 +33,44 @@ type DedupAlert struct {
 	DedupKey string
 }
 
-func SSHBruteForce(hostIP, agentID, srcIP string, failures int) DedupAlert {
-	return DedupAlert{
+// markSimulation 让自检事件的告警带上自检编号：告警据此关联到自检，重复自检也不会被去重挡住。
+func markSimulation(a DedupAlert, simID string) DedupAlert {
+	if simID != "" {
+		a.Message += "（攻击模拟自检 " + simID + "）"
+		a.DedupKey += ":" + simID
+	}
+	return a
+}
+
+func SSHBruteForce(hostIP, agentID, srcIP string, failures int, simID string) DedupAlert {
+	return markSimulation(DedupAlert{
 		Alert: model.Alert{
 			Type: model.AlertSSHBruteForce, Severity: model.SeverityHigh, IP: hostIP,
 			Message: fmt.Sprintf("%s (%s) 遭受暴力破解：来源 %s 在 %d 分钟内登录失败 %d 次",
 				hostIP, agentID, srcIP, int(BruteForceWindow.Minutes()), failures),
 		},
 		DedupKey: "bruteforce:" + agentID + ":" + srcIP,
-	}
+	}, simID)
 }
 
 func BruteForceSuccess(hostIP, agentID string, ev model.HostEvent) DedupAlert {
-	return DedupAlert{
+	return markSimulation(DedupAlert{
 		Alert: model.Alert{
 			Type: model.AlertBruteForceSuccess, Severity: model.SeverityHigh, IP: hostIP,
 			Message: fmt.Sprintf("%s (%s) 疑似被爆破成功：爆破来源 %s 以用户 %s 登录成功", hostIP, agentID, ev.SrcIP, ev.User),
 		},
 		DedupKey: "bfsuccess:" + agentID + ":" + ev.SrcIP + ":" + ev.User,
-	}
+	}, ev.SimulationID)
 }
 
 func RootLogin(hostIP, agentID string, ev model.HostEvent) DedupAlert {
-	return DedupAlert{
+	return markSimulation(DedupAlert{
 		Alert: model.Alert{
 			Type: model.AlertRootLogin, Severity: model.SeverityMedium, IP: hostIP,
 			Message: fmt.Sprintf("%s (%s) root 远程登录，来源 %s（%s）", hostIP, agentID, ev.SrcIP, ev.Detail),
 		},
 		DedupKey: "rootlogin:" + agentID + ":" + ev.SrcIP,
-	}
+	}, ev.SimulationID)
 }
 
 func FileChanged(hostIP, agentID string, ev model.HostEvent) DedupAlert {

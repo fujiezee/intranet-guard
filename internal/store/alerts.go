@@ -15,14 +15,16 @@ func insertAlert(ctx context.Context, tx *Tx, a model.Alert, at time.Time) error
 }
 
 // insertAlertRow 是所有告警写入的唯一入口。告警内容中带有已登记的自检编号时，
-// 告警直接以"自检"结果关闭（不推送、不计入未处理），并把对应自检标记为通过。
+// 告警直接以"自检"结果关闭（不推送、不计入未处理）；只有场景预期的告警类型才把自检标记为通过，
+// 同一场景顺带触发的其他告警不算数。
 func insertAlertRow(ctx context.Context, tx *Tx, a model.Alert, dedupKey string, at time.Time) error {
 	status, ackedBy, resolution := model.AlertOpen, "", ""
 	var simID string
 	var simStarted sql.NullTime
 	var simStatus model.SimulationStatus
+	var simScenario string
 	if id := simulate.IDPattern.FindString(a.Message); id != "" {
-		err := tx.QueryRowContext(ctx, `SELECT status, started_at FROM simulations WHERE id = ?`, id).Scan(&simStatus, &simStarted)
+		err := tx.QueryRowContext(ctx, `SELECT status, started_at, scenario FROM simulations WHERE id = ?`, id).Scan(&simStatus, &simStarted, &simScenario)
 		if err == nil {
 			simID = id
 			status, ackedBy, resolution = model.AlertAcked, "攻击模拟自检", model.ResolutionSimulation
@@ -44,6 +46,9 @@ func insertAlertRow(ctx context.Context, tx *Tx, a model.Alert, dedupKey string,
 		}
 	}
 	if simID == "" || simStatus != model.SimRunning {
+		return nil
+	}
+	if sc, ok := simulate.Get(simScenario); !ok || sc.Expect != a.Type {
 		return nil
 	}
 	var latency int64

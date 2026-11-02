@@ -56,6 +56,8 @@ func (a *Agent) runCommand(cmd model.AgentCommand) model.CommandResult {
 		na, err = a.simWebshell(cmd.ID)
 	case simulate.IntelDNS:
 		simIntelDNS(cmd.ID)
+	case simulate.BruteForce, simulate.BruteForceLogin, simulate.RootLogin:
+		na = a.simLogin(cmd.ID, cmd.Scenario)
 	default:
 		res.Status, res.Detail = "error", "unknown scenario "+cmd.Scenario
 		return res
@@ -293,6 +295,45 @@ func (a *Agent) simWebshell(id string) (string, error) {
 		return "", nil
 	}
 	return "本机没有网站目录（" + strings.Join(a.cfg.WebDirs, "、") + "）", nil
+}
+
+// simLogin 用内置样例日志生成登录事件，经真实的日志解析器后随下次上报发出。不发起登录、不写系统日志，
+// 所以验证的是"解析 → 上报 → 管理中心判定"，不包括读取 auth 日志这一段。
+func (a *Agent) simLogin(id, scenario string) string {
+	if runtime.GOOS == "windows" {
+		return "Windows 登录事件来自安全日志，此场景暂不覆盖"
+	}
+	now := time.Now().UTC()
+	src := "192.0.2." + strconv.Itoa(simSourceOctet(id)) // 文档保留地址，不会是真实来源
+	line := func(msg string) string {
+		return now.Format("2006-01-02T15:04:05Z") + " safe-sim sshd[1]: " + msg + " from " + src + " port 40000 ssh2"
+	}
+	var lines []string
+	if scenario == simulate.RootLogin {
+		lines = append(lines, line("Accepted password for root"))
+	} else {
+		for i := 0; i < 10; i++ {
+			lines = append(lines, line("Failed password for safe-sim"))
+		}
+		if scenario == simulate.BruteForceLogin {
+			lines = append(lines, line("Accepted password for safe-sim"))
+		}
+	}
+	var events []model.HostEvent
+	for _, l := range lines {
+		for _, ev := range ParseAuthLine(l, now) {
+			ev.SimulationID = id
+			events = append(events, ev)
+		}
+	}
+	a.putBackExecEvents(events)
+	return ""
+}
+
+// simSourceOctet 从自检编号算出 1–254：每次自检用不同来源，互不累计失败次数。
+func simSourceOctet(id string) int {
+	n, _ := strconv.ParseUint(strings.TrimPrefix(id, "sim-"), 16, 32)
+	return int(n%254) + 1
 }
 
 // simIntelDNS 查询内置情报域名下带自检编号的子域名。查询必然得到“不存在”，结果不重要：

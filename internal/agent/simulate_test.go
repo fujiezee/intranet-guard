@@ -104,3 +104,43 @@ func TestSimulationChildHelper(t *testing.T) {
 	os.Args = []string{os.Args[0], SimulationChildArg, secs}
 	RunSimulationChildIfRequested()
 }
+
+func TestSimLogin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("not applicable on Windows")
+	}
+	cases := []struct {
+		scenario       string
+		failed, logins int
+		user           string
+	}{
+		{"brute_force", 10, 0, ""},
+		{"brute_force_login", 10, 1, "safe-sim"},
+		{"root_login", 0, 1, "root"},
+	}
+	for _, c := range cases {
+		a := &Agent{}
+		res := a.runCommand(model.AgentCommand{ID: "sim-0000abcd", Type: "simulate", Scenario: c.scenario})
+		if res.Status != "done" {
+			t.Fatalf("%s: %+v", c.scenario, res)
+		}
+		failed, logins := 0, 0
+		for _, ev := range a.takeExecEvents() {
+			if ev.SimulationID != "sim-0000abcd" || !strings.HasPrefix(ev.SrcIP, "192.0.2.") {
+				t.Errorf("%s: %+v", c.scenario, ev)
+			}
+			switch ev.Type {
+			case model.EventLoginFailed:
+				failed++
+			case model.EventLoginSuccess:
+				logins++
+				if ev.User != c.user {
+					t.Errorf("%s: user %q", c.scenario, ev.User)
+				}
+			}
+		}
+		if failed != c.failed || logins != c.logins {
+			t.Errorf("%s: failed %d logins %d", c.scenario, failed, logins)
+		}
+	}
+}

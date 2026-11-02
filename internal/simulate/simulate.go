@@ -27,6 +27,9 @@ const (
 	DownloadExec      = "download_exec"
 	WebshellDrop      = "webshell"
 	IntelDNS          = "intel_dns"
+	BruteForce        = "brute_force"
+	BruteForceLogin   = "brute_force_login"
+	RootLogin         = "root_login"
 )
 
 // IntelDomain 是内置在情报中的自检域名（与 store.SimIntelDomain 一致）。
@@ -48,6 +51,12 @@ var Scenarios = []Scenario{
 		model.AlertThreatIntel, 120 * time.Second},
 	{WebshellDrop, "Webshell 落地", "在网站目录写入一个只含注释的 PHP 文件（无任何代码），2 分钟后删除",
 		model.AlertWebshell, 150 * time.Second},
+	{BruteForce, "暴力破解", "Agent 用内置样例日志生成 10 条 SSH 登录失败事件，来源是文档保留地址（192.0.2.0/24）；不发起真实登录，不写入系统日志",
+		model.AlertSSHBruteForce, 90 * time.Second},
+	{BruteForceLogin, "爆破后登录成功", "Agent 用内置样例日志生成 10 条 SSH 登录失败和 1 条成功事件，来源是文档保留地址；不发起真实登录，不写入系统日志",
+		model.AlertBruteForceSuccess, 90 * time.Second},
+	{RootLogin, "root 远程登录", "Agent 用内置样例日志生成 1 条 root 登录成功事件，来源是文档保留地址；不发起真实登录，不写入系统日志",
+		model.AlertRootLogin, 90 * time.Second},
 }
 
 func Get(id string) (Scenario, bool) {

@@ -114,11 +114,13 @@ func (s *Store) detectHostAlerts(ctx context.Context, hostIP, agentID string, ev
 
 	var alerts []alert.DedupAlert
 	latestFailure := map[string]time.Time{} // 每个来源在本批中最后一次失败的时间
+	failureSim := map[string]string{}       // 来源对应的自检编号（自检注入的事件才有）
 	for _, ev := range events {
 		switch ev.Type {
 		case model.EventLoginFailed:
 			if ev.SrcIP != "" && ev.Time.After(latestFailure[ev.SrcIP]) {
 				latestFailure[ev.SrcIP] = ev.Time
+				failureSim[ev.SrcIP] = ev.SimulationID
 			}
 		case model.EventLoginSuccess:
 			if ev.User == "root" {
@@ -164,7 +166,7 @@ func (s *Store) detectHostAlerts(ctx context.Context, hostIP, agentID string, ev
 			return nil, err
 		}
 		if n >= alert.BruteForceThreshold {
-			alerts = append(alerts, alert.SSHBruteForce(hostIP, agentID, src, n))
+			alerts = append(alerts, alert.SSHBruteForce(hostIP, agentID, src, n, failureSim[src]))
 		}
 	}
 	return alerts, nil

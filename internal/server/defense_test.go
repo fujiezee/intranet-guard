@@ -181,6 +181,36 @@ func TestHoneypotAndSimulation(t *testing.T) {
 		t.Errorf("expired simulation: %+v", list[0])
 	}
 
+	// 登录类自检：只有预期的告警类型才算通过；重复执行不被去重挡住。
+	loginEvents := func(id string, kind model.HostEventType, n int) []model.HostEvent {
+		ev := model.HostEvent{Type: kind, Time: time.Now(), User: "safe-sim", SrcIP: "192.0.2.7", Detail: "ssh password", SimulationID: id}
+		out := make([]model.HostEvent, n)
+		for i := range out {
+			out[i] = ev
+		}
+		return out
+	}
+	for round := 0; round < 2; round++ {
+		call(t, ts, adminToken, "POST", "/api/v1/simulations", createSimulationsRequest{AgentID: "web01", Scenarios: []string{"brute_force_login"}}, &sims)
+		call(t, ts, agentToken, "POST", "/api/v1/agent/report", model.AgentReport{Agent: agentInfo, Events: []model.HostEvent{}}, &resp)
+		call(t, ts, agentToken, "POST", "/api/v1/agent/report", model.AgentReport{Agent: agentInfo, Events: loginEvents(sims[0].ID, model.EventLoginFailed, 10)}, nil)
+		call(t, ts, adminToken, "GET", "/api/v1/simulations", nil, &list)
+		if list[0].ID != sims[0].ID || list[0].Status != model.SimRunning {
+			t.Errorf("round %d: passed on the brute force alert alone: %+v", round, list[0])
+		}
+		call(t, ts, agentToken, "POST", "/api/v1/agent/report", model.AgentReport{Agent: agentInfo, Events: loginEvents(sims[0].ID, model.EventLoginSuccess, 1)}, nil)
+		call(t, ts, adminToken, "GET", "/api/v1/simulations", nil, &list)
+		if list[0].Status != model.SimPassed {
+			t.Errorf("round %d: %+v", round, list[0])
+		}
+	}
+	call(t, ts, adminToken, "GET", "/api/v1/alerts?status=open", nil, &alerts)
+	for _, a := range alerts {
+		if strings.Contains(a.Message, "sim-") {
+			t.Errorf("simulation alert left open: %+v", a)
+		}
+	}
+
 	// 8. 误报标记：必须填原因。
 	real := honeypotAlerts()[0]
 	if code := call(t, ts, adminToken, "POST", "/api/v1/alerts/"+itoa(real.ID)+"/ack",
