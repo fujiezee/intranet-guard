@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"safe/internal/model"
+	"safe/internal/netintel"
 	"safe/internal/store"
 	"safe/internal/store/storetest"
 )
@@ -197,5 +198,44 @@ func TestExportEvents(t *testing.T) {
 	}
 	if dst.calls != 3+3+1 { // 每个 Agent 7 条按 3 条一批 = 3 批
 		t.Errorf("insert calls = %d", dst.calls)
+	}
+}
+
+// 情报分批插入：跨批次的重复条目不重复计数，订阅源刷新整体替换旧条目。
+func TestIntelBatchInsert(t *testing.T) {
+	ctx := context.Background()
+	st := storetest.Open(t)
+	ips := func(from, to int) []netintel.Indicator {
+		var out []netintel.Indicator
+		for i := from; i < to; i++ {
+			out = append(out, netintel.Indicator{Type: "ip", Value: fmt.Sprintf("203.0.%d.%d", i/250, i%250+1)})
+		}
+		return out
+	}
+	if n, err := st.AddIndicators(ctx, model.SeverityHigh, "", ips(0, 1203)); err != nil || n != 1203 {
+		t.Fatalf("added %d, %v", n, err)
+	}
+	if n, err := st.AddIndicators(ctx, model.SeverityHigh, "", ips(700, 1800)); err != nil || n != 1800-1203 {
+		t.Fatalf("re-add: added %d, %v", n, err)
+	}
+	f, err := st.CreateFeed(ctx, model.IntelFeed{Name: "f", URL: "https://example.com/f.txt", Severity: model.SeverityMedium, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, list := range [][]netintel.Indicator{ips(0, 1001), ips(2000, 2600)} {
+		if err := st.RecordFeedFetch(ctx, f.ID, list, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	counts, err := st.IntelCounts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["manual"] != 1800 || counts[fmt.Sprintf("feed:%d", f.ID)] != 600 {
+		t.Errorf("counts = %v", counts)
+	}
+	feeds, _ := st.ListFeeds(ctx)
+	if len(feeds) != 1 || feeds[0].Count != 600 {
+		t.Errorf("feed count = %+v", feeds)
 	}
 }

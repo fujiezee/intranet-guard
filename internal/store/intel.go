@@ -46,12 +46,21 @@ func (s *Store) IntelVersion(ctx context.Context) (int64, error) {
 
 // insertIndicators 插入情报（同一来源的重复条目忽略），返回新增数量。
 func insertIndicators(ctx context.Context, tx *Tx, source string, sev model.Severity, note string, list []netintel.Indicator) (int, error) {
+	// 多行一条语句：订阅源有十几万条，逐条插入在 PostgreSQL 上每次往返都要等网络（15 万条约 1 分钟）
+	const batch = 500
 	now := time.Now().UTC()
 	added := 0
-	for _, ind := range list {
+	for len(list) > 0 {
+		chunk := list[:min(batch, len(list))]
+		list = list[len(chunk):]
+		args := make([]any, 0, len(chunk)*6)
+		for _, ind := range chunk {
+			args = append(args, ind.Type, ind.Value, source, sev, note, now)
+		}
 		res, err := tx.ExecContext(ctx, `
-			INSERT INTO intel_indicators (type, value, source, severity, note, created_at) VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT(source, type, value) DO NOTHING`, ind.Type, ind.Value, source, sev, note, now)
+			INSERT INTO intel_indicators (type, value, source, severity, note, created_at) VALUES `+
+			strings.TrimSuffix(strings.Repeat("(?, ?, ?, ?, ?, ?), ", len(chunk)), ", ")+`
+			ON CONFLICT(source, type, value) DO NOTHING`, args...)
 		if err != nil {
 			return added, err
 		}
