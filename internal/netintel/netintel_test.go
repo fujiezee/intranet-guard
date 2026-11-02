@@ -59,6 +59,63 @@ func TestIntelMatch(t *testing.T) {
 	}
 }
 
+// randomPrefixes 生成公网网段，掩码长度分布与 Spamhaus DROP / FireHOL 相近（/12 到 /32）。
+func randomPrefixes(r *rand.Rand, n int) []Indicator {
+	var out []Indicator
+	for len(out) < n {
+		a := netip.AddrFrom4([4]byte{byte(r.Intn(223) + 1), byte(r.Intn(256)), byte(r.Intn(256)), byte(r.Intn(256))})
+		p, _ := a.Prefix(12 + r.Intn(21))
+		if !SpecialUse(p) {
+			out = append(out, Indicator{Type: "cidr", Value: p.String(), Note: p.String()})
+		}
+	}
+	return out
+}
+
+func TestIntelMatchPrefixes(t *testing.T) {
+	r := rand.New(rand.NewSource(3))
+	list := randomPrefixes(r, 5000)
+	list = append(list, Indicator{Type: "cidr", Value: "203.0.113.0/24", Note: "outer"}, Indicator{Type: "cidr", Value: "203.0.113.128/25", Note: "inner"},
+		Indicator{Type: "cidr", Value: "2001:db8::/32", Note: "v6"})
+	in := NewIntel(list)
+	var all []netip.Prefix
+	for _, ind := range list {
+		all = append(all, netip.MustParsePrefix(ind.Value))
+	}
+	// 与逐条比较的结果一致：命中与否相同，命中时取最长的网段
+	for i := 0; i < 5000; i++ {
+		a := netip.AddrFrom4([4]byte{byte(r.Intn(256)), byte(r.Intn(256)), byte(r.Intn(256)), byte(r.Intn(256))})
+		want, wantOK := netip.Prefix{}, false
+		for _, p := range all {
+			if p.Contains(a) && (!wantOK || p.Bits() > want.Bits()) {
+				want, wantOK = p, true
+			}
+		}
+		got, ok := in.MatchIP(a)
+		if ok != wantOK || ok && got.Note != want.String() {
+			t.Fatalf("MatchIP(%s) = %q %v, want %s %v", a, got.Note, ok, want, wantOK)
+		}
+	}
+	for v, want := range map[string]string{"203.0.113.200": "inner", "203.0.113.5": "outer", "2001:db8:1::1": "v6"} {
+		if got, _ := in.MatchIP(netip.MustParseAddr(v)); got.Note != want {
+			t.Errorf("MatchIP(%s) = %q, want %q", v, got.Note, want)
+		}
+	}
+}
+
+func BenchmarkMatchIP(b *testing.B) {
+	r := rand.New(rand.NewSource(4))
+	in := NewIntel(randomPrefixes(r, 6000)) // 订阅 Spamhaus DROP + FireHOL level1 约 6400 个网段
+	addrs := make([]netip.Addr, 4096)
+	for i := range addrs {
+		addrs[i] = netip.AddrFrom4([4]byte{byte(r.Intn(223) + 1), byte(r.Intn(256)), byte(r.Intn(256)), byte(r.Intn(256))})
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		in.MatchIP(addrs[i%len(addrs)])
+	}
+}
+
 func TestSpecialUse(t *testing.T) {
 	for v, want := range map[string]bool{
 		"10.0.0.0/8": true, "10.20.0.0/16": true, "172.0.0.0/8": true, "192.168.1.0/24": true, "100.64.0.0/10": true,
