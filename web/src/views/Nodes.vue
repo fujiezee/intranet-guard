@@ -79,6 +79,8 @@
         <template v-if="created.kind === 'probe'">
           <p class="hint-block">{{ t('网段名（探针 ID，用于下发扫描任务）：') }}</p>
           <el-input v-model="probeID" :placeholder="t('例如 office-3f')" style="margin-bottom: 4px" />
+          <el-alert v-if="!probeIDValid" type="warning" :closable="false" show-icon style="margin-bottom: 4px"
+            :title="t('填写网段名后显示安装命令（字母、数字、. _ -，以字母或数字开头）')" />
         </template>
         <p class="hint-block">{{ t('管理中心地址（节点用这个地址下载程序和连接管理中心，必须是节点能访问到的地址）：') }}</p>
         <el-input v-model="server" :placeholder="t('https://管理中心IP或域名:8443')" style="margin-bottom: 4px" />
@@ -98,7 +100,7 @@
           {{ t('在每台要接入的 Windows 服务器上，以管理员身份打开') }} <b>Windows PowerShell</b>{{ t('（5.1，不是 PowerShell 7），粘贴执行（自动下载、开启安全审计、注册并安装为系统服务）：') }}
         </p>
         <p v-else class="hint-block">
-          {{ t('在{p0}上以 root 执行（自动下载、注册并作为系统服务运行）：', { p0: created.kind === 'probe' ? t('探针机器') : t('每台要接入的服务器') }) }}
+          {{ t('在{p0}上执行（自动下载、注册并作为系统服务运行；支持 systemd、sysvinit 和 OpenRC）：', { p0: created.kind === 'probe' ? t('探针机器') : t('每台要接入的服务器') }) }}
         </p>
         <div class="cmd-wrap">
           <pre class="cmd">{{ installCommand }}</pre>
@@ -142,6 +144,8 @@ const expired = (t) => new Date(t.expires_at) < Date.now() || t.uses >= t.max_us
 
 const installInfo = ref(null)
 const probeID = ref('')
+// 与管理中心的节点 ID 校验一致（validNodeID）
+const probeIDValid = computed(() => /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(probeID.value.trim()))
 const platform = ref('linux')
 const windows = computed(() => created.value?.kind === 'agent' && platform.value === 'windows')
 const k8s = computed(() => created.value?.kind === 'agent' && platform.value === 'k8s')
@@ -189,9 +193,10 @@ const installCommand = computed(() => {
       `curl -fsSLk --pinnedpubkey '${installInfo.value.pin}' ${base}/install/agent-k8s.yaml | kubectl apply -f -`,
     ].join('\n')
   }
-  const env = [`SAFE_ENROLL_TOKEN='${token}'`]
-  if (kind === 'probe') env.push(t('SAFE_PROBE_ID=\'{p0}\'', { p0: probeID.value.trim() || t('<网段名>') }))
-  return `curl -fsSLk --pinnedpubkey '${installInfo.value.pin}' ${base}/install/${kind}.sh | sudo ${env.join(' ')} sh`
+  // 令牌（和网段名）在地址里，由管理中心写进脚本：命令以 | sudo sh 结尾，不用在 sudo 后面拼环境变量
+  if (kind === 'probe' && !probeIDValid.value) return ''
+  const query = kind === 'probe' ? `?id=${probeID.value.trim()}` : ''
+  return `curl -fsSLk --pinnedpubkey '${installInfo.value.pin}' '${base}/i/${token}${query}' | sudo sh`
 })
 
 async function load() {

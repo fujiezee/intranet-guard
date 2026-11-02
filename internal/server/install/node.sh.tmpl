@@ -1,11 +1,14 @@
 #!/bin/sh
 # safe-{{.Kind}} 一键安装 / 升级 / 卸载脚本，由管理中心生成。
 #
-# 安装： curl ... /install/{{.Kind}}.sh | sudo SAFE_ENROLL_TOKEN='<令牌>'{{if eq .Kind "probe"}} SAFE_PROBE_ID='<网段名>'{{end}} sh
-# 升级： curl ... /install/{{.Kind}}.sh | sudo sh            （已注册的节点不需要令牌）
+# 安装： curl ... /i/<令牌>{{if eq .Kind "probe"}}?id=<网段名>{{end}} | sudo sh       （令牌{{if eq .Kind "probe"}}和网段名{{end}}已写入脚本，控制台“节点管理”给出完整命令）
+#        curl ... /install/{{.Kind}}.sh | sudo SAFE_ENROLL_TOKEN='<令牌>'{{if eq .Kind "probe"}} SAFE_PROBE_ID='<网段名>'{{end}} sh
+# 升级： 重新执行安装命令（已注册的节点不需要令牌）
 # 卸载： curl ... /install/{{.Kind}}.sh | sudo SAFE_ACTION=uninstall sh
 # 离线： 把本脚本和 safe-{{.Kind}}-linux-<架构> 拷到目标机器，sudo SAFE_LOCAL_BIN=./safe-{{.Kind}}-linux-amd64 SAFE_ENROLL_TOKEN=... sh {{.Kind}}.sh
 #        （适用于 curl 太旧、不支持 --pinnedpubkey 的系统，如 CentOS 7；注册本身不依赖 curl）
+# 服务： 自动识别 systemd、sysvinit（MX Linux、Devuan、CentOS 6 等）和 OpenRC（Alpine 等）；
+#        SAFE_INIT=systemd|sysv|openrc 可强制指定
 set -eu
 
 SERVER='{{.ServerURL}}'
@@ -13,6 +16,17 @@ SERVERS='{{.Servers}}' # 写入节点配置的全部管理中心实例（高可�
 PIN='{{.Pin}}'
 KIND='{{.Kind}}'
 NAME="safe-$KIND"
+{{- if .Token}}
+# 用 /i/<令牌> 地址下载时，注册令牌{{if .NodeID}}和节点 ID {{end}}由管理中心写入（只含字母、数字和 . _ -），环境变量仍可覆盖
+SAFE_ENROLL_TOKEN=${SAFE_ENROLL_TOKEN:-{{.Token}}}
+{{- end}}
+{{- if .NodeID}}
+{{- if eq .Kind "probe"}}
+SAFE_PROBE_ID=${SAFE_PROBE_ID:-{{.NodeID}}}
+{{- else}}
+SAFE_AGENT_ID=${SAFE_AGENT_ID:-{{.NodeID}}}
+{{- end}}
+{{- end}}
 R=${SAFE_TEST_ROOT:-} # 仅用于测试：把系统路径放到临时目录下
 STATE="$R/var/lib/$NAME"
 {{- if eq .Kind "agent"}}
@@ -26,20 +40,79 @@ LINK=""
 {{- end}}
 ENV_FILE="$R/etc/$NAME.env"
 UNIT="$R/etc/systemd/system/$NAME.service"
+# 没有 systemd 时：/etc/init.d 脚本启动 RUNNER，RUNNER 在进程退出后自动重启它
+INITD="$R/etc/init.d/$NAME"
+RUNNER="$STATE/bin/run.sh"
+PIDFILE="$R/run/$NAME.pid"
+LOG="$R/var/log/$NAME.log"
 
 say() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31m错误：\033[0m%s\n' "$*" >&2; exit 1; }
 
 [ "$(id -u)" = 0 ] || die "请用 root 运行（在 sh 前加 sudo）"
-command -v systemctl >/dev/null 2>&1 || die "需要 systemd"
+
+# 有 systemctl 不代表系统由 systemd 启动（如 MX Linux 默认用 sysvinit、WSL），以 /run/systemd/system 为准
+if [ -n "${SAFE_INIT:-}" ]; then
+	INIT=$SAFE_INIT
+elif [ -d /run/systemd/system ]; then
+	INIT=systemd
+elif command -v openrc-run >/dev/null 2>&1; then
+	INIT=openrc
+elif [ -d /etc/init.d ]; then
+	INIT=sysv
+else
+	die "无法识别服务管理方式：需要 systemd、sysvinit 或 OpenRC"
+fi
+case "$INIT" in
+systemd) command -v systemctl >/dev/null 2>&1 || die "找不到 systemctl" ;;
+sysv | openrc) ;;
+*) die "SAFE_INIT 只能是 systemd、sysv 或 openrc" ;;
+esac
 [ -n "${SAFE_LOCAL_BIN:-}" ] || command -v curl >/dev/null 2>&1 || die "需要 curl（或用 SAFE_LOCAL_BIN 离线安装）"
+
+svc_stop() {
+	case "$INIT" in
+	systemd) systemctl stop "$NAME" 2>/dev/null || true ;;
+	*) if [ -f "$INITD" ]; then "$INITD" stop >/dev/null 2>&1 || true; fi ;;
+	esac
+}
+
+svc_active() {
+	case "$INIT" in
+	systemd) systemctl is-active --quiet "$NAME" ;;
+	openrc) rc-service "$NAME" status >/dev/null 2>&1 ;;
+	sysv) "$INITD" status >/dev/null 2>&1 ;;
+	esac
+}
+
+svc_logs() {
+	if [ "$INIT" = systemd ]; then
+		journalctl -u "$NAME" -n 20 --no-pager >&2 || true
+	else
+		tail -n 20 "$LOG" >&2 2>/dev/null || true
+	fi
+}
 
 if [ "${SAFE_ACTION:-install}" = uninstall ]; then
 	say "卸载 $NAME"
-	systemctl disable --now "$NAME" 2>/dev/null || true
-	rm -f "$UNIT" "$BIN" "$BIN.prev" "$ENV_FILE"
+	svc_stop
+	case "$INIT" in
+	systemd)
+		systemctl disable "$NAME" 2>/dev/null || true
+		rm -f "$UNIT"
+		systemctl daemon-reload
+		;;
+	openrc) rc-update del "$NAME" default >/dev/null 2>&1 || true ;;
+	sysv)
+		if command -v update-rc.d >/dev/null 2>&1; then
+			update-rc.d -f "$NAME" remove >/dev/null 2>&1 || true
+		elif command -v chkconfig >/dev/null 2>&1; then
+			chkconfig --del "$NAME" >/dev/null 2>&1 || true
+		fi
+		;;
+	esac
+	rm -f "$INITD" "$RUNNER" "$PIDFILE" "$BIN" "$BIN.prev" "$ENV_FILE"
 	[ -n "$LINK" ] && rm -f "$LINK"
-	systemctl daemon-reload
 	say "已卸载。证书和状态保留在 ${STATE}（彻底清除：rm -rf ${STATE}，并在控制台吊销该节点）"
 	exit 0
 fi
@@ -57,9 +130,12 @@ fetch() { curl -fsSLk --pinnedpubkey "$PIN" --retry 2 "$SERVER$1" -o "$2"; }
 ENROLLED=0
 [ -f "$STATE/node.crt" ] && ENROLLED=1
 if [ "$ENROLLED" = 0 ]; then
-	[ -n "${SAFE_ENROLL_TOKEN:-}" ] || die "首次安装需要 SAFE_ENROLL_TOKEN（在控制台“节点管理”生成）"
+{{- if .TokenUnusable}}
+	[ -n "${SAFE_ENROLL_TOKEN:-}" ] || die "这条命令中的注册令牌已过期或已用完：请在控制台“节点管理”重新生成令牌，复制新的命令执行"
+{{- end}}
+	[ -n "${SAFE_ENROLL_TOKEN:-}" ] || die "首次安装需要注册令牌：请在控制台“节点管理”生成令牌，复制页面给出的命令执行"
 {{- if eq .Kind "probe"}}
-	[ -n "${SAFE_PROBE_ID:-}" ] || die "首次安装需要 SAFE_PROBE_ID（网段名，例如 office-3f）"
+	[ -n "${SAFE_PROBE_ID:-}" ] || die "首次安装需要网段名（探针 ID，例如 office-3f）：在控制台生成令牌时填写，或设置 SAFE_PROBE_ID"
 {{- end}}
 fi
 
@@ -73,9 +149,9 @@ else
 	fetch "/download/$NAME-linux-$ARCH" "$TMP" || die "下载失败：确认能访问 ${SERVER}，且没有被代理或中间设备拦截；curl 低于 7.39 请改用离线安装（见脚本开头说明）"
 fi
 chmod 755 "$TMP"
-systemctl stop "$NAME" 2>/dev/null || true
+svc_stop
 install -d -m 700 "$STATE"
-install -d "$(dirname "$BIN")" "$(dirname "$UNIT")"
+install -d "$(dirname "$BIN")" "$STATE/bin" "$(dirname "$ENV_FILE")"
 install -m 755 "$TMP" "$BIN"
 rm -f "$BIN.prev" "$STATE/upgrade-pending"
 {{- if eq .Kind "agent"}}
@@ -113,8 +189,11 @@ else
 	: >"$ENV_FILE"
 fi
 chmod 600 "$ENV_FILE"
+umask 022
 
-cat >"$UNIT" <<EOF
+if [ "$INIT" = systemd ]; then
+	install -d "$(dirname "$UNIT")"
+	cat >"$UNIT" <<EOF
 [Unit]
 Description=safe $KIND
 After=network-online.target{{if eq .Kind "probe"}} suricata.service{{end}}
@@ -149,9 +228,103 @@ ProtectHome=yes
 [Install]
 WantedBy=multi-user.target
 EOF
+	systemctl daemon-reload
+	systemctl enable --now "$NAME" >/dev/null 2>&1
+else
+	# 等同 systemd 的 Restart=always：进程退出 5 秒后重新启动，每次启动前重新读取环境文件
+	# （注册成功后令牌被清空）。没有 systemd 的沙箱和资源上限{{if eq .Kind "agent"}}，只降低调度优先级{{end}}
+	cat >"$RUNNER" <<EOF
+#!/bin/sh
+cd /
+child=
+trap '[ -n "\$child" ] && kill "\$child" 2>/dev/null; exit 0' TERM INT
+while :; do
+{{- if eq .Kind "agent"}}
+	/bin/sh $STATE/bin/upgrade-guard.sh $STATE || true
+{{- end}}
+	set -a
+	. $ENV_FILE
+	set +a
+	{{if eq .Kind "agent"}}nice -n 10 {{end}}$BIN $ARGS &
+	child=\$!
+	wait "\$child" || true
+	child=
+	sleep 5
+done
+EOF
+	chmod 755 "$RUNNER"
+	install -d "$(dirname "$INITD")" "$(dirname "$PIDFILE")" "$(dirname "$LOG")"
+	if [ "$INIT" = openrc ]; then
+		cat >"$INITD" <<EOF
+#!/sbin/openrc-run
+description="safe $KIND"
+command="$RUNNER"
+command_background=yes
+pidfile="$PIDFILE"
+output_log="$LOG"
+error_log="$LOG"
 
-systemctl daemon-reload
-systemctl enable --now "$NAME" >/dev/null 2>&1
+depend() {
+	need net
+{{- if eq .Kind "probe"}}
+	after suricata
+{{- end}}
+}
+EOF
+		chmod 755 "$INITD"
+		rc-update add "$NAME" default >/dev/null 2>&1 || true
+		rc-service "$NAME" restart >/dev/null 2>&1 || rc-service "$NAME" start
+	else
+		cat >"$INITD" <<EOF
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          $NAME
+# Required-Start:    \$network \$remote_fs
+# Required-Stop:     \$network \$remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: safe $KIND
+### END INIT INFO
+running() { [ -f "$PIDFILE" ] && kill -0 "\$(cat "$PIDFILE")" 2>/dev/null; }
+case "\$1" in
+start)
+	running && exit 0
+	nohup "$RUNNER" >>"$LOG" 2>&1 </dev/null &
+	echo \$! >"$PIDFILE"
+	;;
+stop)
+	if running; then
+		kill "\$(cat "$PIDFILE")"
+		i=0
+		while running && [ \$i -lt 10 ]; do
+			sleep 1
+			i=\$((i + 1))
+		done
+	fi
+	rm -f "$PIDFILE"
+	;;
+restart)
+	"\$0" stop
+	"\$0" start
+	;;
+status)
+	if running; then echo "$NAME is running"; else echo "$NAME is stopped"; exit 3; fi
+	;;
+*)
+	echo "Usage: \$0 {start|stop|restart|status}"
+	exit 2
+	;;
+esac
+EOF
+		chmod 755 "$INITD"
+		if command -v update-rc.d >/dev/null 2>&1; then
+			update-rc.d "$NAME" defaults >/dev/null 2>&1 || true
+		elif command -v chkconfig >/dev/null 2>&1; then
+			chkconfig --add "$NAME" >/dev/null 2>&1 || true
+		fi
+		"$INITD" start
+	fi
+fi
 
 if [ "$ENROLLED" = 0 ]; then
 	say "向管理中心注册"
@@ -161,7 +334,7 @@ if [ "$ENROLLED" = 0 ]; then
 		i=$((i + 1))
 	done
 	if [ ! -f "$STATE/node.crt" ]; then
-		journalctl -u "$NAME" -n 20 --no-pager >&2 || true
+		svc_logs
 		die "注册失败，见上方日志（常见原因：令牌过期或已用完、节点 ID 已被注册、无法访问 ${SERVER}）"
 	fi
 	# 注册成功后令牌不再需要，从配置中删除
@@ -169,8 +342,12 @@ if [ "$ENROLLED" = 0 ]; then
 fi
 
 sleep 2
-systemctl is-active --quiet "$NAME" || {
-	journalctl -u "$NAME" -n 20 --no-pager >&2 || true
+svc_active || {
+	svc_logs
 	die "$NAME 未能运行，见上方日志"
 }
-say "$NAME 已运行。查看日志：journalctl -u $NAME -f"
+if [ "$INIT" = systemd ]; then
+	say "$NAME 已运行。查看日志：journalctl -u $NAME -f"
+else
+	say "$NAME 已运行（${INIT}，开机自动启动）。查看日志：tail -f $LOG"
+fi

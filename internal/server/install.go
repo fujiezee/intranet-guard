@@ -2,17 +2,21 @@ package server
 
 import (
 	_ "embed"
+	"errors"
 	htmltemplate "html/template"
 	"io"
 	"net"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"text/template"
+
+	"safe/internal/store"
 )
 
 //go:embed install/node.sh.tmpl
@@ -40,7 +44,9 @@ var (
 	// 地址和指纹会被写进 shell 脚本的单引号字符串里，必须严格校验，防止注入。
 	validHost = regexp.MustCompile(`^[A-Za-z0-9.\-]+(:[0-9]{1,5})?$|^\[[0-9A-Fa-f:.]+\](:[0-9]{1,5})?$`)
 	validPin  = regexp.MustCompile(`^sha256//[A-Za-z0-9+/=]{44}$`)
-	validDist = regexp.MustCompile(`^safe-(agent|probe)-linux-(amd64|arm64)$|^safe-agent-windows-(amd64|arm64)\.exe$`)
+	// 注册令牌 = 32 位十六进制密钥 + "." + CA 指纹（64 位十六进制），会写进安装脚本
+	validEnrollToken = regexp.MustCompile(`^[0-9a-f]{32}\.[0-9a-f]{64}$`)
+	validDist        = regexp.MustCompile(`^safe-(agent|probe)-linux-(amd64|arm64)$|^safe-agent-windows-(amd64|arm64)\.exe$`)
 )
 
 // installScript 返回节点一键安装脚本。脚本里的管理中心地址取自请求的 Host：
@@ -57,17 +63,11 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	if !validHost.MatchString(r.Host) || !validPin.MatchString(s.cfg.InstallPin) {
+	data, ok := s.installData(r, kind)
+	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid host")
 		return
 	}
-	// 下载用本次访问的实例；写入节点配置的是全部实例（未配置 -node-urls 时即本实例）
-	servers := "https://" + r.Host
-	if len(s.cfg.NodeURLs) > 0 {
-		servers = strings.Join(s.cfg.NodeURLs, ",")
-	}
-	data := map[string]string{"Kind": kind, "ServerURL": "https://" + r.Host, "Servers": servers, "Pin": s.cfg.InstallPin,
-		"Guard": upgradeGuard}
 	if strings.HasSuffix(script, ".yaml") {
 		w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 		_ = k8sManifest.Execute(w, data)
@@ -79,6 +79,56 @@ func (s *Server) installScript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	_ = nodeScript.Execute(w, data)
+}
+
+// installData 是安装脚本模板的公共参数；Host 头会写进脚本，格式不对时返回 false。
+func (s *Server) installData(r *http.Request, kind string) (map[string]any, bool) {
+	if !validHost.MatchString(r.Host) || !validPin.MatchString(s.cfg.InstallPin) {
+		return nil, false
+	}
+	// 下载用本次访问的实例；写入节点配置的是全部实例（未配置 -node-urls 时即本实例）
+	servers := "https://" + r.Host
+	if len(s.cfg.NodeURLs) > 0 {
+		servers = strings.Join(s.cfg.NodeURLs, ",")
+	}
+	return map[string]any{"Kind": kind, "ServerURL": "https://" + r.Host, "Servers": servers, "Pin": s.cfg.InstallPin,
+		"Guard": upgradeGuard}, true
+}
+
+// installByToken 返回写好注册令牌（和节点 ID）的 Linux 安装脚本，安装命令因此只需 curl ... | sudo sh，
+// 不用在 sudo 后面拼环境变量。节点类型取自令牌。令牌已过期或用完时脚本仍然返回但不含令牌：
+// 已注册的节点重复执行即升级，未注册的节点由脚本提示重新生成令牌。
+func (s *Server) installByToken(w http.ResponseWriter, r *http.Request) {
+	// 严格解析查询参数：r.URL.Query() 会静默丢弃含 ";" 等非法字符的参数，写错的网段名不能被当成没填
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	token, id := r.PathValue("token"), query.Get("id")
+	if err != nil || !validEnrollToken.MatchString(token) || id != "" && !validNodeID.MatchString(id) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	data, ok := s.installData(r, "")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid host")
+		return
+	}
+	secret, _, _ := strings.Cut(token, ".")
+	kind, usable, err := s.store.EnrollTokenKind(r.Context(), hashToken(secret))
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	if errors.Is(err, store.ErrNotFound) {
+		// 返回 200 和一段报错的脚本：返回错误码的话 curl -f 不输出内容，sh 读到空脚本后什么也不提示
+		_, _ = io.WriteString(w, "#!/bin/sh\necho '错误：注册令牌不存在（可能已被删除）。请在控制台“节点管理”重新生成令牌，复制新的命令执行' >&2\nexit 1\n")
+		return
+	} else if err != nil {
+		writeInternal(w, err)
+		return
+	}
+	data["Kind"], data["NodeID"] = string(kind), id
+	if usable {
+		data["Token"] = token
+	} else {
+		data["TokenUnusable"] = true
+	}
 	_ = nodeScript.Execute(w, data)
 }
 

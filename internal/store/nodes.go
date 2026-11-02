@@ -44,6 +44,21 @@ func (s *Store) ListEnrollTokens(ctx context.Context) ([]model.EnrollToken, erro
 	return out, rows.Err()
 }
 
+// EnrollTokenKind 查询令牌的节点类型，不占用额度。usable 表示仍可用于注册（未过期、未用完）；
+// 令牌不存在时返回 ErrNotFound。
+func (s *Store) EnrollTokenKind(ctx context.Context, tokenHash string) (kind model.NodeKind, usable bool, err error) {
+	var uses, maxUses int
+	var exp int64
+	err = s.db.QueryRowContext(ctx, `SELECT kind, uses, max_uses, expires_at FROM enroll_tokens WHERE token_hash = ?`,
+		tokenHash).Scan(&kind, &uses, &maxUses, &exp)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, ErrNotFound
+	} else if err != nil {
+		return "", false, err
+	}
+	return kind, uses < maxUses && exp > time.Now().Unix(), nil
+}
+
 func (s *Store) DeleteEnrollToken(ctx context.Context, id int64) error {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM enroll_tokens WHERE id = ?`, id)
 	if err != nil {

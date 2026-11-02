@@ -172,6 +172,7 @@ func New(cfg Config, st *store.Store) *Server {
 	s.nodeMux.HandleFunc("POST /api/v1/enroll", s.enroll)
 	s.nodeMux.HandleFunc("POST /api/v1/node/renew", s.renew)
 	s.nodeMux.HandleFunc("GET /install/{script}", s.installScript)
+	s.nodeMux.HandleFunc("GET /i/{token}", s.installByToken)
 	s.nodeMux.HandleFunc("GET /download/{file}", s.download)
 	s.nodeMux.HandleFunc("GET /{$}", s.nodeIndex)
 	s.nodeMux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { writeError(w, http.StatusNotFound, "not found") })

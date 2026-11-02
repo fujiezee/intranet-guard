@@ -3,8 +3,9 @@
 #
 # 用替身命令（systemctl / useradd / id / install 等）代替系统命令，所有系统路径放到临时目录（SAFE_TEST_ROOT），
 # 但安装脚本本身、公钥指纹下载、节点注册、mTLS 通信都是真实执行的。覆盖：
-#   管理中心安装 → 登录 → 生成令牌 → Agent / 探针一键安装并注册 → 错误指纹被拒 → 升级（数据和密码保留）→ 卸载
-# 不覆盖：真实 systemd、各 Linux 发行版差异、防火墙。
+#   管理中心安装 → 登录 → 生成令牌 → Agent / 探针一键安装并注册 → 错误指纹被拒 → 升级（数据和密码保留）→
+#   /i/<令牌> 一行命令 + 没有 systemd 的系统（sysvinit 脚本、进程退出后自动重启）→ 卸载
+# 不覆盖：真实 systemd / sysvinit / OpenRC、各 Linux 发行版差异、防火墙。
 #
 # 用法：scripts/test-install.sh        （需要 go、npm 已构建的 web/dist、curl、openssl、python3）
 set -eu
@@ -12,6 +13,8 @@ set -eu
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 WORK=$(mktemp -d)
 export SAFE_TEST_ROOT="$WORK/root"
+# 开发机上没有 /run/systemd/system，节点安装脚本默认会按 sysvinit 处理；除专门测试 sysvinit 的部分外都用替身 systemctl
+export SAFE_INIT=systemd
 STUBS="$WORK/stubs"
 BUNDLE="$WORK/bundle"
 CONSOLE_PORT=19443
@@ -157,6 +160,32 @@ check "已注册的 Agent 无需令牌即可升级" 'printf "%s" "$OUT" | grep -
 sleep 3
 TOKEN=$(curl -fsSk -X POST "https://127.0.0.1:$CONSOLE_PORT/api/v1/auth/login" -d "{\"username\":\"admin\",\"password\":\"$ADMIN_PW\"}" | json 'd["token"]')
 check "升级后节点证书仍然有效（2 个 Agent + 1 个探针）" '[ "$(api GET /nodes | json "len([n for n in d if n[\"status\"]==\"active\"])")" = 3 ]'
+
+echo "== /i/<令牌> 一行命令，没有 systemd 的系统（sysvinit）"
+R3="$WORK/root3"
+mkdir -p "$R3/run"
+ST=$(api POST /enroll-tokens '{"kind":"probe","max_uses":1,"ttl_hours":1}' | json 'd["token"]')
+OUT=$(curl -fsSLk --pinnedpubkey "$PIN" "$NODE_URL/i/$ST?id=sim-sysv" | SAFE_TEST_ROOT="$R3" SAFE_INIT=sysv sh 2>&1) || true
+printf '%s\n' "$OUT" | sed 's/^/    /'
+check "命令中不带环境变量即可安装并注册" 'printf "%s" "$OUT" | grep -q "已运行（sysv"'
+check "生成 /etc/init.d 脚本而不是 systemd 单元" '[ -x "$R3/etc/init.d/safe-probe" ] && [ ! -f "$R3/etc/systemd/system/safe-probe.service" ]'
+check "注册后令牌已从配置中删除" '[ ! -s "$R3/etc/safe-probe.env" ]'
+check "init.d status 显示运行中" '"$R3/etc/init.d/safe-probe" status >/dev/null'
+pkill -f "^$R3/usr/local/bin/safe-probe" || true
+sleep 7
+check "进程退出后自动重启" 'pgrep -f "^$R3/usr/local/bin/safe-probe" >/dev/null'
+OUT=$(curl -fsSLk --pinnedpubkey "$PIN" "$NODE_URL/i/$ST?id=sim-sysv" | SAFE_TEST_ROOT="$R3" SAFE_INIT=sysv sh 2>&1) || true
+check "令牌用完后，同一条命令用于升级" 'printf "%s" "$OUT" | grep -q "已运行（sysv"'
+RUNNER_PID=$(cat "$R3/run/safe-probe.pid")
+OUT=$(curl -fsSLk --pinnedpubkey "$PIN" "$NODE_URL/i/$ST" | SAFE_TEST_ROOT="$R3" SAFE_INIT=sysv SAFE_ACTION=uninstall sh 2>&1) || true
+sleep 1
+check "卸载后服务停止、init.d 脚本删除" '[ ! -f "$R3/etc/init.d/safe-probe" ] && ! kill -0 "$RUNNER_PID" 2>/dev/null && ! pgrep -f "^$R3/usr/local/bin/safe-probe" >/dev/null'
+
+mkdir -p "$WORK/root4/run"
+OUT=$(curl -fsSLk --pinnedpubkey "$PIN" "$NODE_URL/i/$ST?id=sim-new" | SAFE_TEST_ROOT="$WORK/root4" SAFE_INIT=sysv sh 2>&1) || true
+check "用完的令牌在新机器上提示重新生成" 'printf "%s" "$OUT" | grep -q "已过期或已用完"'
+OUT=$(curl -fsSLk --pinnedpubkey "$PIN" "$NODE_URL/i/$(printf '0%.0s' $(seq 32)).$(printf 'a%.0s' $(seq 64))" | sh 2>&1) && bad "不存在的令牌应当失败" || ok "不存在的令牌报错退出"
+check "不存在的令牌给出提示" 'printf "%s" "$OUT" | grep -q "令牌不存在"'
 
 echo "== 备份"
 ( set -a; . "$SAFE_TEST_ROOT/etc/safe/safe.env"; set +a; SAFE_HOME="$SAFE_TEST_ROOT/var/lib/safe" SAFE_CONF="$SAFE_TEST_ROOT/etc/safe" \
