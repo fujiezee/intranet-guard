@@ -8,7 +8,7 @@
 | 角色 | 数量 | 要求 |
 | --- | --- | --- |
 | 管理中心 | 1 台 | Linux（x86_64 或 ARM64）、systemd、2 核 4G 起、root 权限 |
-| 主机 Agent | 2～3 台 | 不同发行版各一台最好（如 Ubuntu、CentOS / Rocky、麒麟 / 统信），systemd |
+| 主机 Agent | 2～3 台 | 不同发行版各一台最好（如 Ubuntu、CentOS / Rocky、麒麟 / 统信）；systemd、sysvinit、OpenRC 均可 |
 | 网络探针 | 1 台 | 放在要扫描的网段里；做流量检测还需要接交换机镜像口（SPAN） |
 
 网络：Agent 和探针要能访问管理中心的 **8443** 端口；管理员电脑要能访问管理中心的 **443** 端口。
@@ -34,7 +34,7 @@ sudo ./install.sh
 在每台服务器上执行即可，形如：
 
 ```bash
-curl -fsSLk --pinnedpubkey 'sha256//…' https://<管理中心>:8443/install/agent.sh | sudo SAFE_ENROLL_TOKEN='…' sh
+curl -fsSLk --pinnedpubkey 'sha256//…' 'https://<管理中心>:8443/i/<令牌>' | sudo sh
 ```
 
 几秒后在 **主机审计** 页能看到该主机在线。
@@ -42,7 +42,7 @@ curl -fsSLk --pinnedpubkey 'sha256//…' https://<管理中心>:8443/install/age
 - curl 低于 7.39 的系统（如 CentOS 7）用离线方式：在能联网的机器上下载 `install/agent.sh` 和安装包里的
   `downloads/safe-agent-linux-amd64`，拷过去执行
   `sudo SAFE_LOCAL_BIN=./safe-agent-linux-amd64 SAFE_ENROLL_TOKEN='…' sh agent.sh`。
-- 升级：重新执行同一条命令（不需要令牌）。卸载：命令里的 `SAFE_ENROLL_TOKEN=…` 换成 `SAFE_ACTION=uninstall`。
+- 升级：重新执行同一条命令（令牌过期也可以，已注册的节点不需要令牌）。卸载：命令末尾的 `sudo sh` 改成 `sudo SAFE_ACTION=uninstall sh`。
 
 ## 3. 安装探针（约 1 分钟）
 
@@ -59,6 +59,7 @@ sudo dnf install -y epel-release && sudo dnf install -y suricata && sudo suricat
 确认 `/var/log/suricata/eve.json` 有内容。
 
 然后在控制台生成"网络探针"类型的令牌，填写网段名（例如 `office-3f`），复制命令到探针机器执行。
+网段名写在命令的地址里（`/i/<令牌>?id=office-3f`），命令同样以 `| sudo sh` 结尾。
 
 ## 4. 开始使用
 

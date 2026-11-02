@@ -206,6 +206,7 @@
 ### 安装 Agent（以 Linux 服务器为例）
 
 **前提**：目标服务器能访问管理中心的 **8443** 端口；有 root 权限（或 sudo）；系统自带的 curl 即可（7.39 及以上）。
+systemd、sysvinit（MX Linux、Devuan、CentOS 6 等）和 OpenRC（Alpine 等）都支持，安装脚本自动识别。
 
 1. **生成令牌**：「节点管理 → 生成注册令牌」，类型选 **Agent**，"使用次数"填要装的服务器数量（一个令牌可装多台），
    有效期按需（例如 24 小时），点"生成"。
@@ -213,8 +214,10 @@
    如果你是用 localhost 打开的控制台，会自动换成本机的局域网地址）。选 Linux，点"复制命令"。命令形如：
 
    ```
-   curl -fsSLk --pinnedpubkey 'sha256//WQcY…IPyI=' https://192.168.1.9:8443/install/agent.sh | sudo SAFE_ENROLL_TOKEN='令牌' sh
+   curl -fsSLk --pinnedpubkey 'sha256//WQcY…IPyI=' 'https://192.168.1.9:8443/i/令牌' | sudo sh
    ```
+
+   令牌在地址里，管理中心把它写进下载的安装脚本，所以命令总是以 `| sudo sh` 结尾。
 
 3. **在目标服务器上执行**：SSH 登录目标服务器，粘贴执行。约 10 秒完成，最后显示"safe-agent 已运行"。
 4. **确认接入**：回到控制台「主机审计」，该服务器出现在列表中、状态"在线"，采集能力中有"命令审计"。
@@ -226,10 +229,10 @@
 | 下载安装脚本 | 从管理中心下载，并核对管理中心的公钥指纹（命令中的 `sha256//…`），防止被中间人替换 |
 | 下载 Agent 程序 | 自动识别 x86_64 / ARM，下载对应程序到 `/usr/local/bin/safe-agent` |
 | 注册 | 本机生成私钥（不离开本机），用令牌向管理中心换取证书；之后用证书通信，令牌从配置中删除 |
-| 安装为系统服务 | 创建并启动 `safe-agent` 服务（开机自启，限制 CPU 20%、内存 256M） |
+| 安装为系统服务 | 创建并启动 `safe-agent` 服务（开机自启，限制 CPU 20%、内存 256M）。没有 systemd 的系统用 `/etc/init.d/safe-agent`，进程退出后自动重启，日志在 `/var/log/safe-agent.log`，只降低调度优先级、没有 CPU / 内存上限 |
 
 **批量安装**：同一条命令可以在多台服务器上执行（不超过令牌的使用次数），可通过 Ansible、堡垒机批量执行等现有工具下发。
-主机名会作为 Agent 名称，重名时在命令中加 `SAFE_AGENT_ID='名称'`（写在 `SAFE_ENROLL_TOKEN=…` 旁边）。
+主机名会作为 Agent 名称，重名时把命令末尾的 `sudo sh` 改成 `sudo SAFE_AGENT_ID='名称' sh`。
 
 **Windows**：弹窗中选 Windows，以管理员身份打开 **Windows PowerShell**（5.1，不是 PowerShell 7）粘贴执行，自动开启安全审计并安装为系统服务。
 
