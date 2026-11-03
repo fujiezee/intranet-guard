@@ -225,7 +225,7 @@ func (s *Store) AgentIDsForIP(ctx context.Context, ip string) ([]string, error) 
 	if err != nil {
 		return nil, err
 	}
-	var out []string
+	out := []string{}
 	for _, a := range agents {
 		for _, x := range a.IPs {
 			if x == ip {
