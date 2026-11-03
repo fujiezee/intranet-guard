@@ -45,7 +45,7 @@
           </el-select>
           <el-input v-model="assignee" :placeholder="t('负责人')" style="width: 140px" @change="update({ assignee })" />
           <el-button type="danger" plain @click="router.push({ path: '/response', query: { ip: detail.incident.ip, reason: t('事件 #{p0}：{p1}', { p0: detail.incident.id, p1: detail.incident.title }) } })">{{ t('处置主机') }}</el-button>
-          <span v-if="detail.agents.length === 0" class="sub">{{ t('该地址没有 Agent，只有网络侧告警') }}</span>
+          <span v-if="!detail.agents?.length" class="sub">{{ t('该地址没有 Agent，只有网络侧告警') }}</span>
         </div>
 
         <h4>{{ t('时间线') }}</h4>

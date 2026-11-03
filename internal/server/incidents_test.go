@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -8,7 +9,27 @@ import (
 	"time"
 
 	"safe/internal/model"
+	"safe/internal/netintel"
 )
+
+// 网络侧事件（主机上没有 Agent）的详情中 agents 必须是 []：控制台按数组读取，null 会让详情抽屉渲染失败。
+func TestIncidentDetailWithoutAgent(t *testing.T) {
+	ts, adminToken := newTestServer(t)
+	call(t, ts, probeToken, "POST", "/api/v1/probe/net-findings", netFindingReport{ProbeID: "seg-a", Findings: []netintel.Finding{
+		{Kind: "beacon", Severity: "medium", SrcIP: "10.0.0.111", Peer: "203.0.113.50:443", Time: time.Now(), Detail: "周期性连接"}}}, nil)
+	var list []model.Incident
+	call(t, ts, adminToken, "GET", "/api/v1/incidents", nil, &list)
+	if len(list) != 1 || list[0].IP != "10.0.0.111" {
+		t.Fatalf("network-only incident: %+v", list)
+	}
+	var raw map[string]json.RawMessage
+	call(t, ts, adminToken, "GET", fmt.Sprintf("/api/v1/incidents/%d", list[0].ID), nil, &raw)
+	for _, k := range []string{"agents", "alerts", "events", "notes"} {
+		if v := string(raw[k]); !strings.HasPrefix(v, "[") {
+			t.Errorf("%s = %s, want a JSON array", k, v)
+		}
+	}
+}
 
 func TestIncidentsAndRisk(t *testing.T) {
 	ts, adminToken := newTestServer(t)
