@@ -76,3 +76,53 @@ connectivity.
 Raise a test alert from any node, e.g. append a line to `/etc/passwd` on the
 host (not in a pod) or run a known escape pattern; the corresponding alert
 should appear in the console within the collect interval (default 30s).
+
+---
+
+# Running the network probe on Kubernetes
+
+The network probe (`safe-probe`) scans a network segment for open ports,
+unauthorized services and weak passwords. Run one per segment — a Deployment
+with a single replica, not a DaemonSet. It polls the management center for scan
+tasks (plain TCP connect, no raw sockets, no privileges) and reports results.
+
+The scan range is set in the console, not on the probe.
+
+## 1. Build and push
+
+```bash
+make docker-probe REGISTRY=registry.internal VERSION=0.1.0 push
+```
+
+## 2. Create a probe enrollment token
+
+Console: **Node management → generate registration token**, kind **probe**
+(distinct from the agent token). Multi-use if several segments enroll from it.
+
+```bash
+kubectl -n safe-system create secret generic safe-probe-enroll \
+  --from-literal=token='<TOKEN>'
+```
+
+## 3. Deploy and set the scan range
+
+Set the image in `deploy/k8s/probe.yaml` (replace `REPLACE_IMAGE`), then:
+
+```bash
+kubectl apply -f deploy/k8s/probe.yaml
+kubectl -n safe-system rollout status deploy/safe-probe-cluster-nodes
+```
+
+The probe appears in the console node list as a `probe` named `cluster-nodes`.
+Then define that segment's CIDR in the console (asset discovery); the probe
+picks up the task on its next poll and discovered hosts, ports and
+vulnerabilities start appearing.
+
+With `hostNetwork: true` the probe scans the node/VPC subnet. To also scan the
+pod network, deploy a second copy without `hostNetwork` and a different `-id`.
+
+## More than one segment
+
+Copy `probe.yaml` per segment and change the resource names, the `segment`
+label, `-id`, the PVC name, and the `nodeSelector` so each probe lands in the
+segment it must scan.
