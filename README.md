@@ -16,7 +16,7 @@ tar -xzf safe-0.1.0-linux-amd64.tar.gz && cd safe-0.1.0-linux-amd64 && sudo ./in
 
 安装脚本的模拟测试（无需 root / systemd）：`scripts/test-install.sh`。
 
-Kubernetes 集群用 DaemonSet 在每个节点部署 Agent（进程 / 容器逃逸 / 文件完整性审计），见 [docs/K8S.md](docs/K8S.md)，清单在 `deploy/k8s/`。
+Kubernetes 集群：用 DaemonSet 在每个节点部署 Agent（进程 / 容器逃逸 / 文件完整性审计），每个网段用一个 Deployment 部署探针（端口发现 / 漏洞扫描），见 [docs/K8S.md](docs/K8S.md)，清单在 `deploy/k8s/`。
 
 ## 高可用部署（多个管理中心实例）
 

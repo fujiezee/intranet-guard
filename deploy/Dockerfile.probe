@@ -1,0 +1,21 @@
+# Build the safe-probe container image for scanning a cluster network segment.
+#   docker build -f deploy/Dockerfile.probe --build-arg TARGETARCH=amd64 -t <reg>/safe-probe:<ver> .
+# The probe is a static binary; the final image is scratch. It authenticates to
+# the management center with the internal CA stored in its state dir, so it
+# needs no system CA bundle.
+ARG GO_VERSION=1.26
+# Build on the host's native arch (no emulation); cross-compile to the target.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION} AS build
+ARG TARGETARCH=amd64
+ARG VERSION=dev
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" \
+    -o /out/safe-probe ./cmd/probe
+
+FROM scratch
+COPY --from=build /out/safe-probe /safe-probe
+ENTRYPOINT ["/safe-probe"]

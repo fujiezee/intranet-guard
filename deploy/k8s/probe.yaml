@@ -1,0 +1,90 @@
+# safe-probe for one cluster network segment: network discovery and vuln
+# scanning (unauthorized access, weak passwords, banner CVEs). One probe per
+# segment, not per node.
+#
+# The scan range is NOT set here — the probe polls the management center for
+# scan tasks. Define the segment and its CIDR in the console (asset discovery)
+# after the probe appears in the node list.
+#
+# Before applying:
+#   1. Build and push the image, set it below (REPLACE_IMAGE).
+#   2. Set -server and a unique -id per segment (e.g. cluster-nodes).
+#   3. Create a probe enrollment token Secret:
+#        kubectl -n safe-system create secret generic safe-probe-enroll \
+#          --from-literal=token='<TOKEN>'    # token kind must be "probe"
+#   4. With more than one segment, copy this file per segment: change the name,
+#      -id, and nodeSelector to pin it to that segment's node pool.
+#
+# hostNetwork puts the probe on the node's network so it can scan the node/VPC
+# subnet directly. It needs no root or privileged (plain TCP connect scan).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: safe-probe-cluster-nodes
+  namespace: safe-system
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: safe-probe-cluster-nodes
+  namespace: safe-system
+  labels:
+    app: safe-probe
+    segment: cluster-nodes
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # single writer for the ReadWriteOnce state volume
+  selector:
+    matchLabels:
+      app: safe-probe
+      segment: cluster-nodes
+  template:
+    metadata:
+      labels:
+        app: safe-probe
+        segment: cluster-nodes
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # Pin to a node in the segment this probe should scan. Edit to match.
+      # nodeSelector:
+      #   kubernetes.io/hostname: <node-in-segment>
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: safe-probe
+          image: REPLACE_IMAGE # e.g. registry.internal/safe-probe:0.1.0
+          args:
+            - -server=https://47.117.27.183:8443
+            - -id=cluster-nodes
+          env:
+            - name: SAFE_ENROLL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: safe-probe-enroll
+                  key: token
+                  optional: true # only needed until this probe is enrolled
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/safe-probe
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: safe-probe-cluster-nodes

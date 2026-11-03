@@ -8,7 +8,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 RELEASE_PUBKEY ?= $(shell cat release.pub 2>/dev/null)
 AGENT_VERSION_FLAG = -X safe/internal/agent.Version=$(VERSION) -X safe/internal/agent.ReleaseKeys=$(RELEASE_PUBKEY)
 
-.PHONY: test test-pg test-ch build web release docker-agent
+.PHONY: test test-pg test-ch build web release docker-agent docker-probe
 
 # 为 Kubernetes 节点构建 safe-agent 容器镜像（linux/amd64）。
 #   make docker-agent REGISTRY=registry.internal VERSION=0.1.0            # 仅构建
@@ -21,6 +21,16 @@ docker-agent:
 		-t '$(AGENT_IMAGE)' .
 	@echo 'built $(AGENT_IMAGE)'
 	@case '$(filter push,$(MAKECMDGOALS))' in push) docker push '$(AGENT_IMAGE)';; esac
+
+# 为 Kubernetes 构建 safe-probe 容器镜像（linux/amd64）。
+#   make docker-probe REGISTRY=registry.internal VERSION=0.1.0 [push]
+PROBE_IMAGE = $(REGISTRY)/safe-probe:$(VERSION)
+docker-probe:
+	docker build -f deploy/Dockerfile.probe --platform=linux/amd64 --provenance=false \
+		--build-arg TARGETARCH=amd64 --build-arg VERSION='$(VERSION)' \
+		-t '$(PROBE_IMAGE)' .
+	@echo 'built $(PROBE_IMAGE)'
+	@case '$(filter push,$(MAKECMDGOALS))' in push) docker push '$(PROBE_IMAGE)';; esac
 push:
 	@:
 
