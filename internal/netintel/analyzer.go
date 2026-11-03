@@ -161,7 +161,8 @@ func (a *Analyzer) Observe(e Event) []Finding {
 				out = append(out, a.intelFinding(host, fmt.Sprintf("%s:%d", peer, e.DstPort), dir, ind, e.Time))
 			}
 		}
-		if Internal(e.SrcIP) && !Internal(e.DstIP) {
+		// 心跳、外传只看发往公网的流量：组播 / 广播（SSDP、mDNS 等）也是周期性的，但不出内网
+		if Internal(e.SrcIP) && !SpecialUseAddr(e.DstIP) {
 			a.observeFlow(e)
 		}
 	}

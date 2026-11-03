@@ -249,6 +249,9 @@ func TestBeacon(t *testing.T) {
 		a.Observe(flow("10.0.0.6", "198.51.100.7", 443, t0.Add(time.Duration(r.Intn(3600))*time.Second), 300))
 		// NTP 周期性但排除
 		a.Observe(flow("10.0.0.7", "198.51.100.8", 123, t0.Add(time.Duration(i)*64*time.Second), 90))
+		// SSDP / mDNS 等组播、广播周期性但排除：不出内网
+		a.Observe(flow("10.0.0.8", "239.255.255.250", 1900, t0.Add(time.Duration(i)*24*time.Second), 200))
+		a.Observe(flow("10.0.0.8", "255.255.255.255", 6667, t0.Add(time.Duration(i)*30*time.Second), 200))
 	}
 	f := kinds(a.Tick(t0.Add(25 * time.Minute)))["beacon"]
 	if len(f) != 1 || f[0].SrcIP != "10.0.0.5" || f[0].Severity != "high" || !strings.Contains(f[0].Detail, "每隔约 1m0s") {
