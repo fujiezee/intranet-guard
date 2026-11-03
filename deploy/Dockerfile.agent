@@ -1,0 +1,22 @@
+# Build the safe-agent container image for Kubernetes nodes.
+#   docker build -f deploy/Dockerfile.agent --build-arg TARGETARCH=amd64 -t <reg>/safe-agent:<ver> .
+# The agent is a static binary; the final image is scratch. It authenticates to
+# the management center with the internal CA stored in its state dir, so it
+# needs no system CA bundle.
+ARG GO_VERSION=1.26
+# Build on the host's native arch (no emulation); cross-compile the Go binary to
+# the target arch. buildx fills BUILDPLATFORM/TARGETARCH from --platform.
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION} AS build
+ARG TARGETARCH=amd64
+ARG VERSION=dev
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w -X safe/internal/agent.Version=${VERSION}" \
+    -o /out/safe-agent ./cmd/agent
+
+FROM scratch
+COPY --from=build /out/safe-agent /safe-agent
+ENTRYPOINT ["/safe-agent"]

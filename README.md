@@ -16,6 +16,8 @@ tar -xzf safe-0.1.0-linux-amd64.tar.gz && cd safe-0.1.0-linux-amd64 && sudo ./in
 
 安装脚本的模拟测试（无需 root / systemd）：`scripts/test-install.sh`。
 
+Kubernetes 集群用 DaemonSet 在每个节点部署 Agent（进程 / 容器逃逸 / 文件完整性审计），见 [docs/K8S.md](docs/K8S.md)，清单在 `deploy/k8s/`。
+
 ## 高可用部署（多个管理中心实例）
 
 1. 准备 PostgreSQL 和 ClickHouse（各自按官方文档做主备 / 集群），所有实例使用同一组连接串（`-db`、`-events-db`）。
