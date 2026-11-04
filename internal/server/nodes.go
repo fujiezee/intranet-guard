@@ -78,8 +78,26 @@ func (s *Server) requireNode(kind model.NodeKind, next http.HandlerFunc) http.Ha
 			writeError(w, http.StatusUnauthorized, "certificate revoked or superseded")
 			return
 		}
+		if kind == model.NodeProbe {
+			s.touchProbe(r.Context(), id.ID)
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), nodeCtxKey{}, id)))
 	})
+}
+
+// probeTouchEvery 限制 last_seen 的写库频率：探针每 10 秒轮询一次任务，离线判定以分钟计，不需要每次都写。
+const probeTouchEvery = 30 * time.Second
+
+func (s *Server) touchProbe(ctx context.Context, id string) {
+	now := time.Now()
+	if last, ok := s.probeSeen.Load(id); ok && now.Sub(last.(time.Time)) < probeTouchEvery {
+		return
+	}
+	if err := s.store.TouchProbe(ctx, id, now); err != nil {
+		slog.Warn("touch probe", "probe", id, "err", err)
+		return
+	}
+	s.probeSeen.Store(id, now)
 }
 
 // nodeIdentity 返回请求方的节点 ID。证书认证时以证书为准，请求里声明的 ID 必须为空或与证书一致；

@@ -67,6 +67,8 @@ const typeLabels = {
   file_changed: t('文件篡改'),
   suspicious_process: t('可疑进程'),
   agent_offline: t('Agent 离线'),
+  probe_offline: t('探针离线'),
+  ids_silent: t('流量检测中断'),
   ids: t('入侵检测'),
   vuln: t('漏洞'),
   honeypot: t('蜜罐'),

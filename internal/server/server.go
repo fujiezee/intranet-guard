@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"safe/internal/model"
@@ -56,13 +57,14 @@ type Config struct {
 }
 
 type Server struct {
-	cfg     Config
-	store   *store.Store
-	mux     *http.ServeMux // 控制台与管理 API
-	nodeMux *http.ServeMux // 节点接入（mTLS）
-	limiter *loginLimiter
-	release releaseCache // Agent 升级用的版本清单与策略缓存
-	intel   intelPayload // 下发给探针的情报（gzip），按情报版本缓存
+	cfg       Config
+	store     *store.Store
+	mux       *http.ServeMux // 控制台与管理 API
+	nodeMux   *http.ServeMux // 节点接入（mTLS）
+	limiter   *loginLimiter
+	release   releaseCache // Agent 升级用的版本清单与策略缓存
+	probeSeen sync.Map     // 探针 ID → 最近一次写入 last_seen 的时间，限制写库频率
+	intel     intelPayload // 下发给探针的情报（gzip），按情报版本缓存
 }
 
 func New(cfg Config, st *store.Store) *Server {

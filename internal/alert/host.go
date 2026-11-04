@@ -104,6 +104,33 @@ func AgentOffline(hostIP, agentID string, lastSeen time.Time) DedupAlert {
 	}
 }
 
+// ProbeOffline：探针失联。DedupKey 用于恢复后自动确认这条告警。
+func ProbeOffline(probeIP, probeID string, lastSeen time.Time) DedupAlert {
+	return DedupAlert{
+		Alert: model.Alert{
+			Type: model.AlertProbeOffline, Severity: model.SeverityHigh, IP: probeIP,
+			Message: fmt.Sprintf("探针 %s 离线，最后通信 %s；网段扫描、蜜罐与流量检测已中断",
+				probeID, lastSeen.Local().Format("2006-01-02 15:04:05")),
+		},
+		DedupKey: ProbeOfflineKey(probeID),
+	}
+}
+
+// IDSSilent：探针在线但不再上报 IDS 事件，多为 Suricata 停止或探针启动参数丢了 -eve。
+func IDSSilent(probeIP, probeID string, lastIDS time.Time) DedupAlert {
+	return DedupAlert{
+		Alert: model.Alert{
+			Type: model.AlertIDSSilent, Severity: model.SeverityMedium, IP: probeIP,
+			Message: fmt.Sprintf("探针 %s 在线，但自 %s 起没有上报流量检测事件；检查 Suricata 是否在运行、探针是否带 -eve",
+				probeID, lastIDS.Local().Format("2006-01-02 15:04:05")),
+		},
+		DedupKey: IDSSilentKey(probeID),
+	}
+}
+
+func ProbeOfflineKey(probeID string) string { return "probe-offline:" + probeID }
+func IDSSilentKey(probeID string) string    { return "ids-silent:" + probeID }
+
 // UpgradeRejected：Agent 拒绝了升级包。问题在管理中心一侧，同一版本只告警一次，多台 Agent 拒绝不会形成告警风暴。
 func UpgradeRejected(hostIP, agentID, target string) DedupAlert {
 	return DedupAlert{

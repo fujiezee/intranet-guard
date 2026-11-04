@@ -144,6 +144,8 @@ export default {
   "文件篡改": "File tampering",
   "可疑进程": "Suspicious process",
   "Agent 离线": "Agent offline",
+  "探针离线": "Probe offline",
+  "流量检测中断": "Network IDS stopped",
   "入侵检测": "Intrusion detection",
   "可疑命令": "Suspicious command",
   "Agent 停止": "Agent stopped",

@@ -171,6 +171,9 @@ CREATE TABLE IF NOT EXISTS nodes (
 	cert_expiry INTEGER NOT NULL, -- unix 秒
 	enrolled_at TIMESTAMP NOT NULL,
 	token_id    INTEGER NOT NULL,
+	last_seen   BIGINT NOT NULL DEFAULT 0, -- unix 毫秒，探针最近一次通信，见 TouchProbe
+	ids_seen    BIGINT NOT NULL DEFAULT 0, -- unix 毫秒，最近一次 IDS 上报；0 未回填，-1 从未上报
+	health      TEXT NOT NULL DEFAULT '',  -- 探针健康：''、offline、ids_silent，见 CheckProbeHealth
 	PRIMARY KEY (kind, id)
 );
 CREATE TABLE IF NOT EXISTS vulns (
@@ -406,6 +409,9 @@ var addedColumns = []struct{ table, column, def string }{
 	{"assets", "importance", "TEXT NOT NULL DEFAULT 'normal'"},
 	{"assets", "owner", "TEXT NOT NULL DEFAULT ''"},
 	{"assets", "tags", "TEXT NOT NULL DEFAULT ''"},
+	{"nodes", "last_seen", "BIGINT NOT NULL DEFAULT 0"},
+	{"nodes", "ids_seen", "BIGINT NOT NULL DEFAULT 0"},
+	{"nodes", "health", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func initSchema(db *DB) error {
