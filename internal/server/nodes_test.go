@@ -207,3 +207,30 @@ func TestProbeIdentity(t *testing.T) {
 		t.Errorf("legacy route without tokens: %d", code)
 	}
 }
+
+// 探针的每次 mTLS 请求都算心跳：通信过的探针超时后告警离线，从未通信的不告警。
+func TestProbeHeartbeat(t *testing.T) {
+	e := newNodeEnv(t)
+	tok := e.token(t, model.NodeProbe, 2)
+	probe, err := e.connect(t, model.NodeProbe, "seg-a", tok, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.connect(t, model.NodeProbe, "seg-b", tok, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if code := nodeCall(t, probe.HTTP, e.nodes.URL+"/api/v1/probe/tasks", "GET", nil); code != http.StatusOK {
+		t.Fatalf("claim tasks: %d", code)
+	}
+	ctx := context.Background()
+	if n, err := e.st.CheckProbeHealth(ctx, time.Now(), 15*time.Minute); err != nil || n != 0 {
+		t.Fatalf("fresh probe: %d, %v", n, err)
+	}
+	if n, err := e.st.CheckProbeHealth(ctx, time.Now().Add(16*time.Minute), 15*time.Minute); err != nil || n != 1 {
+		t.Fatalf("after timeout: %d, %v", n, err)
+	}
+	alerts, _ := e.st.ListAlerts(ctx, model.AlertOpen, 10)
+	if len(alerts) != 1 || alerts[0].Type != model.AlertProbeOffline || !strings.Contains(alerts[0].Message, "seg-a") {
+		t.Fatalf("alerts = %+v", alerts)
+	}
+}

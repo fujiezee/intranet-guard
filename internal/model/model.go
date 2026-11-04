@@ -193,6 +193,8 @@ const (
 	AlertAccountChange     AlertType = "account_change"
 	AlertDomainAttack      AlertType = "domain_attack"
 	AlertUpgradeRejected   AlertType = "upgrade_rejected" // Agent 拒绝了未通过发布签名验证的升级包
+	AlertProbeOffline      AlertType = "probe_offline"    // 探针长时间没有与管理中心通信
+	AlertIDSSilent         AlertType = "ids_silent"       // 探针在线，但长时间没有上报 IDS 事件
 )
 
 // IDSEvent 是探针从 Suricata 告警中归一化出的流量检测事件。

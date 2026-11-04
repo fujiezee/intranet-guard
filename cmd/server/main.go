@@ -270,10 +270,11 @@ func bootstrapAdmin(st *store.Store) error {
 
 const (
 	agentOfflineAfter = 3 * time.Minute     // Agent 默认 30 秒上报一次，连续多次缺失视为离线
+	probeSilentAfter  = 15 * time.Minute    // 探针离线、流量检测中断的判定时长
 	eventRetention    = 90 * 24 * time.Hour // 主机事件、IDS 事件保留时长
 )
 
-// maintenance 定期执行：Agent 离线检测、超时任务清理（每分钟），过期会话与历史事件清理（每小时）。
+// maintenance 定期执行：Agent 离线检测、探针健康检查、超时任务清理（每分钟），过期会话与历史事件清理（每小时）。
 func maintenance(ctx context.Context, st *store.Store, srv *server.Server, taskTimeout time.Duration, active func() bool) {
 	minute := time.NewTicker(time.Minute)
 	hour := time.NewTicker(time.Hour)
@@ -325,6 +326,11 @@ func maintenance(ctx context.Context, st *store.Store, srv *server.Server, taskT
 				slog.Warn("mark offline agents", "err", err)
 			} else if n > 0 {
 				slog.Warn("agents went offline", "count", n)
+			}
+			if n, err := st.CheckProbeHealth(ctx, time.Now(), probeSilentAfter); err != nil {
+				slog.Warn("check probe health", "err", err)
+			} else if n > 0 {
+				slog.Warn("probe health changed", "count", n)
 			}
 			if ids, err := st.FailStaleTasks(ctx, time.Now().Add(-taskTimeout)); err != nil {
 				slog.Warn("fail stale tasks", "err", err)
