@@ -294,6 +294,7 @@ export default {
   "源 IP": "Source IP",
   "目的 IP": "Destination IP",
   "规则 ID": "Rule ID",
+  "没有符合筛选条件的事件": "No events match the filters",
   "暂无事件，确认探针已通过 -eve 接入 Suricata": "No events. Check that the probe reads Suricata output through -eve",
   "优先级": "Priority",
   "源": "Source",
