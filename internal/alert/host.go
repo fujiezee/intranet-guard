@@ -116,13 +116,14 @@ func ProbeOffline(probeIP, probeID string, lastSeen time.Time) DedupAlert {
 	}
 }
 
-// IDSSilent：探针在线但不再上报 IDS 事件，多为 Suricata 停止或探针启动参数丢了 -eve。
-func IDSSilent(probeIP, probeID string, lastIDS time.Time) DedupAlert {
+// IDSSilent：探针在线但 eve.json 不再增长，多为 Suricata 停止或 eve 输出路径变了。
+// 不按 IDS 告警判断：告警只在规则命中时产生，网络安静时没有告警是正常的。
+func IDSSilent(probeIP, probeID string, lastEve time.Time) DedupAlert {
 	return DedupAlert{
 		Alert: model.Alert{
 			Type: model.AlertIDSSilent, Severity: model.SeverityMedium, IP: probeIP,
-			Message: fmt.Sprintf("探针 %s 在线，但自 %s 起没有上报流量检测事件；检查 Suricata 是否在运行、探针是否带 -eve",
-				probeID, lastIDS.Local().Format("2006-01-02 15:04:05")),
+			Message: fmt.Sprintf("探针 %s 在线，但 Suricata 的 eve.json 自 %s 起没有新内容；检查 Suricata 是否在运行、-eve 路径是否正确",
+				probeID, lastEve.Local().Format("2006-01-02 15:04:05")),
 		},
 		DedupKey: IDSSilentKey(probeID),
 	}

@@ -172,7 +172,7 @@ CREATE TABLE IF NOT EXISTS nodes (
 	enrolled_at TIMESTAMP NOT NULL,
 	token_id    INTEGER NOT NULL,
 	last_seen   BIGINT NOT NULL DEFAULT 0, -- unix 毫秒，探针最近一次通信，见 TouchProbe
-	ids_seen    BIGINT NOT NULL DEFAULT 0, -- unix 毫秒，最近一次 IDS 上报；0 未回填，-1 从未上报
+	ids_seen    BIGINT NOT NULL DEFAULT 0, -- unix 毫秒，eve.json 最近一次有新内容（探针上报）；<= 0 不检查
 	health      TEXT NOT NULL DEFAULT '',  -- 探针健康：''、offline、ids_silent，见 CheckProbeHealth
 	PRIMARY KEY (kind, id)
 );

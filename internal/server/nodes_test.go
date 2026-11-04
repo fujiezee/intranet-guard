@@ -234,3 +234,33 @@ func TestProbeHeartbeat(t *testing.T) {
 		t.Fatalf("alerts = %+v", alerts)
 	}
 }
+
+// 配置请求里的 eve_idle 按管理中心时钟换算：eve.json 20 分钟没有新内容即告警流量检测中断；不发该字段的探针不检查。
+func TestProbeEveIdle(t *testing.T) {
+	e := newNodeEnv(t)
+	tok := e.token(t, model.NodeProbe, 2)
+	withEve, err := e.connect(t, model.NodeProbe, "seg-a", tok, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldProbe, err := e.connect(t, model.NodeProbe, "seg-b", tok, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := nodeCall(t, withEve.HTTP, e.nodes.URL+"/api/v1/probe/config", "POST",
+		map[string]any{"ips": []string{}, "status": map[int]string{}, "eve_idle": 20 * 60}); code != http.StatusOK {
+		t.Fatalf("config with eve_idle: %d", code)
+	}
+	if code := nodeCall(t, oldProbe.HTTP, e.nodes.URL+"/api/v1/probe/config", "POST",
+		map[string]any{"ips": []string{}, "status": map[int]string{}}); code != http.StatusOK {
+		t.Fatalf("config without eve_idle: %d", code)
+	}
+	ctx := context.Background()
+	if n, err := e.st.CheckProbeHealth(ctx, time.Now(), 15*time.Minute); err != nil || n != 1 {
+		t.Fatalf("CheckProbeHealth = %d, %v; want 1", n, err)
+	}
+	alerts, _ := e.st.ListAlerts(ctx, model.AlertOpen, 10)
+	if len(alerts) != 1 || alerts[0].Type != model.AlertIDSSilent || !strings.Contains(alerts[0].Message, "seg-a") {
+		t.Fatalf("alerts = %+v", alerts)
+	}
+}

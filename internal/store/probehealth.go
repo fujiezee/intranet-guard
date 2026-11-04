@@ -25,12 +25,9 @@ func (s *Store) TouchProbe(ctx context.Context, id string, at time.Time) error {
 	return err
 }
 
-// CheckProbeHealth 把超过 after 没有通信的探针标记为离线、在线但超过 after 没有 IDS 上报的标记为流量检测中断，
+// CheckProbeHealth 把超过 after 没有通信的探针标记为离线、在线但 eve.json 超过 after 没有新内容的标记为流量检测中断，
 // 并告警；恢复的探针自动确认对应告警。返回本次状态变化的探针数。
 func (s *Store) CheckProbeHealth(ctx context.Context, now time.Time, after time.Duration) (int, error) {
-	if err := s.backfillIDSSeen(ctx); err != nil {
-		return 0, err
-	}
 	cutoff := now.Add(-after).UnixMilli()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -85,7 +82,7 @@ func (s *Store) CheckProbeHealth(ctx context.Context, now time.Time, after time.
 		return nil
 	}
 
-	// 顺序有意为之：刚恢复通信的探针本轮不检查 IDS，留一分钟让积压的事件上报。
+	// 顺序有意为之：刚恢复通信的探针本轮不检查 eve，留一分钟让它上报最新状态。
 	offline, err := transition(`
 		UPDATE nodes SET health = ? WHERE kind = ? AND status = ? AND health <> ? AND last_seen > 0 AND last_seen < ?
 		RETURNING id, last_seen`,
@@ -115,7 +112,7 @@ func (s *Store) CheckProbeHealth(ctx context.Context, now time.Time, after time.
 	if err := resolve(idsBack, alert.IDSSilentKey); err != nil {
 		return 0, err
 	}
-	// 离线前可能已处于流量检测中断，两条告警一起确认；IDS 若仍无上报，下一轮会重新告警。
+	// 离线前可能已处于流量检测中断，两条告警一起确认；eve 若仍不增长，下一轮会重新告警。
 	online, err := transition(`
 		UPDATE nodes SET health = ? WHERE kind = ? AND health = ? AND last_seen >= ? RETURNING id, last_seen`,
 		probeHealthy, model.NodeProbe, probeOffline, cutoff)
@@ -131,41 +128,11 @@ func (s *Store) CheckProbeHealth(ctx context.Context, now time.Time, after time.
 	return len(offline) + len(silent) + len(idsBack) + len(online), nil
 }
 
-// backfillIDSSeen 为 ids_seen 未知（0）的探针按事件存储中最新的 IDS 事件回填；从未上报过的记为 -1，不检查 IDS。
-// 在事务之外执行：事件存储可能与主库共用 SQLite 的唯一连接。
-func (s *Store) backfillIDSSeen(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM nodes WHERE kind = ? AND ids_seen = 0`, model.NodeProbe)
-	if err != nil {
-		return err
-	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, id := range ids {
-		evs, err := s.events.ListIDSEvents(ctx, IDSFilter{ProbeID: id, Limit: 1})
-		if err != nil {
-			return err
-		}
-		seen := int64(-1)
-		if len(evs) > 0 {
-			seen = evs[0].Time.UnixMilli()
-		}
-		if _, err := s.db.ExecContext(ctx, `UPDATE nodes SET ids_seen = ? WHERE kind = ? AND id = ? AND ids_seen = 0`,
-			seen, model.NodeProbe, id); err != nil {
-			return err
-		}
-	}
-	return nil
+// ReportEve 记录探针所见 eve.json 最近一次有新内容的时间（已按管理中心时钟换算）。
+func (s *Store) ReportEve(ctx context.Context, id string, at time.Time) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE nodes SET ids_seen = ? WHERE kind = ? AND id = ?`,
+		at.UnixMilli(), model.NodeProbe, id)
+	return err
 }
 
 // probeIP 返回告警关联的探针地址：探针上报的本机地址中优先资产库已有的，没有地址时用探针 ID。

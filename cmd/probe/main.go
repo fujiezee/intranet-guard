@@ -101,6 +101,7 @@ func main() {
 
 	ns := newNetState()
 	if *evePath != "" {
+		ns.eveSeen.Store(time.Now().UnixMilli()) // 从启动开始计：Suricata 一直没写入也会在管理中心超时告警
 		go runEve(ctx, c, *evePath, *statePath, ns)
 		go runNetFindings(ctx, c, ns)
 	}
@@ -178,6 +179,9 @@ func runEve(ctx context.Context, c *client, path, statePath string, ns *netState
 				slog.Warn("read eve.json", "path", path, "err", err)
 				break
 			}
+			if len(lines) > 0 {
+				ns.eveSeen.Store(time.Now().UnixMilli())
+			}
 			events := []model.IDSEvent{}
 			for _, line := range lines {
 				if ev, ok := ids.ParseEveLine(line); ok {
@@ -254,8 +258,12 @@ func runHoneypot(ctx context.Context, c *client, ns *netState) {
 			IntelVersion int64                `json:"intel_version"`
 			Net          netintel.Config      `json:"net"`
 		}
-		err := c.do(ctx, http.MethodPost, "/api/v1/probe/config?probe_id="+url.QueryEscape(c.probeID),
-			map[string]any{"ips": localIPs(), "status": status}, &resp)
+		req := map[string]any{"ips": localIPs(), "status": status}
+		if seen := ns.eveSeen.Load(); seen > 0 {
+			// 发相对时长而不是时间点：管理中心按自己的时钟换算，探针时钟不准也不会误判
+			req["eve_idle"] = int64(time.Since(time.UnixMilli(seen)) / time.Second)
+		}
+		err := c.do(ctx, http.MethodPost, "/api/v1/probe/config?probe_id="+url.QueryEscape(c.probeID), req, &resp)
 		if err == nil {
 			ns.update(ctx, c, resp.IntelVersion, resp.Net)
 		}
@@ -304,6 +312,7 @@ func localIPs() []string {
 type netState struct {
 	analyzer *netintel.Analyzer
 	version  atomic.Int64 // 已加载的情报版本
+	eveSeen  atomic.Int64 // unix 毫秒，最近一次从 eve.json 读到新内容；0 表示未启用 -eve
 	mu       sync.Mutex
 	pending  []netintel.Finding
 	dropped  int
