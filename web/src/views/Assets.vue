@@ -26,9 +26,9 @@
           </el-tooltip>
         </template>
       </el-table-column>
-      <el-table-column :label="t('主机名 / 负责人')" min-width="170">
+      <el-table-column :label="t('名称 / 负责人')" min-width="170">
         <template #default="{ row }">
-          <div>{{ row.hostname }}</div>
+          <div>{{ assetName(row) }}</div>
           <div class="sub">
             <el-tag v-if="row.importance === 'core'" size="small" type="danger" effect="plain">{{ t('核心') }}</el-tag>
             <el-tag v-else-if="row.importance === 'important'" size="small" type="warning" effect="plain">{{ t('重要') }}</el-tag>
@@ -57,14 +57,15 @@
     <el-drawer :model-value="!!current" @close="current = null" :title="current?.ip" size="560px">
       <template v-if="current">
         <el-descriptions :column="1" border>
-          <el-descriptions-item :label="t('主机名')">{{ current.hostname || '-' }}</el-descriptions-item>
+          <el-descriptions-item :label="t('主机名')">{{ current.agent_hostname || current.hostname || '-' }}</el-descriptions-item>
           <el-descriptions-item :label="t('风险')">
             <el-tag size="small" :type="riskType(current.risk)" effect="dark">{{ current.risk }}</el-tag>
             <span class="sub" style="margin-left: 6px">{{ (current.risk_reasons || []).join('；') || t('无') }}</span>
           </el-descriptions-item>
-          <el-descriptions-item :label="t('重要性 / 负责人 / 标签')">
+          <el-descriptions-item :label="t('名称 / 重要性 / 负责人 / 标签')">
             <template v-if="auth.isAdmin">
               <div class="meta">
+                <el-input v-model="meta.name" size="small" :placeholder="t('名称')" maxlength="64" style="width: 140px" />
                 <el-select v-model="meta.importance" size="small" style="width: 90px">
                   <el-option :label="t('普通')" value="normal" />
                   <el-option :label="t('重要')" value="important" />
@@ -75,7 +76,7 @@
                 <el-button size="small" @click="saveMeta">{{ t('保存') }}</el-button>
               </div>
             </template>
-            <template v-else>{{ current.importance }} {{ current.owner }} {{ (current.tags || []).join(', ') }}</template>
+            <template v-else>{{ current.name }} {{ current.importance }} {{ current.owner }} {{ (current.tags || []).join(', ') }}</template>
           </el-descriptions-item>
           <el-descriptions-item :label="t('探针')">{{ current.probe_id }}</el-descriptions-item>
           <el-descriptions-item :label="t('首次发现')">{{ formatTime(current.first_seen) }}</el-descriptions-item>
@@ -139,7 +140,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '../api'
 import { auth } from '../auth'
-import { compareIP, formatTime } from '../format'
+import { assetName, compareIP, formatTime } from '../format'
 
 // 与后端 internal/alert 中的高危端口保持一致，用于高亮显示。
 const riskyPorts = new Set([23, 2375, 5900, 6379, 9200, 11211, 27017, 21, 135, 139, 445, 1433, 1521, 3306, 3389, 5432, 5985])
@@ -148,16 +149,17 @@ const assets = ref([])
 const loading = ref(false)
 const keyword = ref('')
 const current = ref(null)
-const meta = reactive({ importance: 'normal', owner: '', tags: '' })
+const meta = reactive({ name: '', importance: 'normal', owner: '', tags: '' })
 const riskType = (r) => (r >= 60 ? 'danger' : r >= 30 ? 'warning' : r > 0 ? 'info' : 'success')
 
 function select(row) {
   current.value = row
-  Object.assign(meta, { importance: row.importance || 'normal', owner: row.owner || '', tags: (row.tags || []).join(', ') })
+  Object.assign(meta, { name: row.name || '', importance: row.importance || 'normal', owner: row.owner || '', tags: (row.tags || []).join(', ') })
 }
 
 async function saveMeta() {
   await api.setAssetMeta(current.value.ip, {
+    name: meta.name.trim(),
     importance: meta.importance,
     owner: meta.owner,
     tags: meta.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean),
@@ -206,7 +208,7 @@ const filtered = computed(() => {
   return inGroup.filter(
     (a) =>
       a.ip.includes(k) ||
-      (a.hostname || '').toLowerCase().includes(k) ||
+      [a.name, a.agent_hostname, a.hostname].some((n) => (n || '').toLowerCase().includes(k)) ||
       a.ports.some((p) => String(p.port) === k || (p.service || '').toLowerCase().includes(k)),
   )
 })

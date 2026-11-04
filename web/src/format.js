@@ -5,6 +5,11 @@ export function formatTime(iso) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
+// 资产显示名：手动名称 > Agent 上报的主机名 > 扫描得到的主机名。
+export function assetName(a) {
+  return a.name || a.agent_hostname || a.hostname || ''
+}
+
 // 按数值比较 IPv4 地址，用于表格排序。
 export function compareIP(a, b) {
   const pa = a.split('.').map(Number)

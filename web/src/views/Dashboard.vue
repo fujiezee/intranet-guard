@@ -42,7 +42,7 @@
             <el-table-column :label="t('风险')" width="80">
               <template #default="{ row }"><el-tag size="small" effect="dark" :type="row.risk >= 60 ? 'danger' : row.risk >= 30 ? 'warning' : 'info'">{{ row.risk }}</el-tag></template>
             </el-table-column>
-            <el-table-column :label="t('资产')" width="220"><template #default="{ row }"><span class="mono">{{ row.ip }}</span> {{ row.hostname }}</template></el-table-column>
+            <el-table-column :label="t('资产')" width="220"><template #default="{ row }"><span class="mono">{{ row.ip }}</span> {{ assetName(row) }}</template></el-table-column>
             <el-table-column prop="owner" :label="t('负责人')" width="100" />
             <el-table-column :label="t('原因')"><template #default="{ row }"><span class="sub">{{ (row.risk_reasons || []).join('；') }}</span></template></el-table-column>
           </el-table>
@@ -82,7 +82,7 @@ import { t } from '../i18n'
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
-import { formatTime } from '../format'
+import { assetName, formatTime } from '../format'
 import SeverityTag from '../components/SeverityTag.vue'
 
 const router = useRouter()

@@ -11,15 +11,17 @@ type Port struct {
 }
 
 type Asset struct {
-	IP         string   `json:"ip"`
-	Hostname   string   `json:"hostname,omitempty"`
-	Ports      []Port   `json:"ports"`
-	ProbeID    string   `json:"probe_id"`
-	Honeypot   bool     `json:"honeypot,omitempty"`   // 该地址运行着蜜罐，端口是伪装的
-	Importance string   `json:"importance,omitempty"` // normal / important / core
-	Owner      string   `json:"owner,omitempty"`
-	Tags       []string `json:"tags,omitempty"`
-	Groups     []string `json:"groups,omitempty"` // 所属资产组名称
+	IP            string   `json:"ip"`
+	Hostname      string   `json:"hostname,omitempty"`       // 扫描得到：反向 DNS，其次 NetBIOS
+	Name          string   `json:"name,omitempty"`           // 管理员手动填写
+	AgentHostname string   `json:"agent_hostname,omitempty"` // 该地址上 Agent 上报的主机名，只在资产列表 / 详情中填写
+	Ports         []Port   `json:"ports"`
+	ProbeID       string   `json:"probe_id"`
+	Honeypot      bool     `json:"honeypot,omitempty"`   // 该地址运行着蜜罐，端口是伪装的
+	Importance    string   `json:"importance,omitempty"` // normal / important / core
+	Owner         string   `json:"owner,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	Groups        []string `json:"groups,omitempty"` // 所属资产组名称
 	// Risk 是 0-100 的风险分，RiskReasons 说明扣分项；只在资产列表 / 详情中计算
 	Risk        int       `json:"risk"`
 	RiskReasons []string  `json:"risk_reasons,omitempty"`

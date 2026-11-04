@@ -105,12 +105,20 @@ func TestIncidentsAndRisk(t *testing.T) {
 		t.Errorf("risk = %d %v", a.Risk, a.RiskReasons)
 	}
 	if code := call(t, ts, adminToken, "PUT", "/api/v1/assets/10.0.0.21/meta",
-		map[string]any{"importance": "core", "owner": "张工", "tags": []string{"数据库", "生产"}}, nil); code != http.StatusNoContent {
+		map[string]any{"name": " 订单库 ", "importance": "core", "owner": "张工", "tags": []string{"数据库", "生产"}}, nil); code != http.StatusNoContent {
 		t.Fatalf("set meta: %d", code)
 	}
 	call(t, ts, adminToken, "GET", "/api/v1/assets/10.0.0.21", nil, &a)
 	if a.Importance != "core" || a.Owner != "张工" || len(a.Tags) != 2 || (a.Risk <= base && a.Risk != 100) {
 		t.Errorf("after meta: %+v", a)
+	}
+	// 手动名称去掉首尾空格；该地址上的 Agent 主机名随资产返回
+	if a.Name != "订单库" || a.AgentHostname != "web01" {
+		t.Errorf("name = %q, agent hostname = %q", a.Name, a.AgentHostname)
+	}
+	if code := call(t, ts, adminToken, "PUT", "/api/v1/assets/10.0.0.21/meta",
+		map[string]any{"name": strings.Repeat("长", 30), "importance": "core"}, nil); code != http.StatusBadRequest {
+		t.Errorf("overlong name: %d", code)
 	}
 
 	// 6. 处置记录、结案：事件下未处理的告警一并确认；之后的新告警开启新事件

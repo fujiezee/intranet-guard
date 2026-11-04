@@ -122,8 +122,8 @@ func (s *Store) scoreAssets(ctx context.Context, assets []model.Asset) error {
 	return nil
 }
 
-// SetAssetMeta 设置资产的重要性、负责人和标签。
-func (s *Store) SetAssetMeta(ctx context.Context, ip, importance, owner string, tags []string) error {
-	return s.execOne(ctx, `UPDATE assets SET importance = ?, owner = ?, tags = ? WHERE ip = ?`,
-		importance, owner, strings.Join(tags, ","), ip)
+// SetAssetMeta 设置资产的手动名称、重要性、负责人和标签。
+func (s *Store) SetAssetMeta(ctx context.Context, ip, name, importance, owner string, tags []string) error {
+	return s.execOne(ctx, `UPDATE assets SET name = ?, importance = ?, owner = ?, tags = ? WHERE ip = ?`,
+		name, importance, owner, strings.Join(tags, ","), ip)
 }
