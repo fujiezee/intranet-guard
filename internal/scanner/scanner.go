@@ -111,15 +111,38 @@ feed:
 	assets := make([]model.Asset, 0, len(results))
 	for _, a := range results {
 		sort.Slice(a.Ports, func(i, j int) bool { return a.Ports[i].Port < a.Ports[j].Port })
-		if names, err := net.DefaultResolver.LookupAddr(ctx, a.IP); err == nil && len(names) > 0 {
-			a.Hostname = strings.TrimSuffix(names[0], ".")
-		}
 		assets = append(assets, *a)
 	}
 	sort.Slice(assets, func(i, j int) bool {
 		return netip.MustParseAddr(assets[i].IP).Less(netip.MustParseAddr(assets[j].IP))
 	})
+	resolveNames(ctx, assets, opts.Timeout)
 	return assets
+}
+
+// nameLookups 是同时进行的主机名查询数：NetBIOS 查不到时要等满超时，逐台查询会让大网段多出几分钟。
+const nameLookups = 32
+
+// resolveNames 为存活主机查询主机名：先反向 DNS，没有记录（办公网的路由器通常不提供）时再查 NetBIOS。
+func resolveNames(ctx context.Context, assets []model.Asset, timeout time.Duration) {
+	sem := make(chan struct{}, nameLookups)
+	var wg sync.WaitGroup
+	for i := range assets {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(a *model.Asset) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			if names, err := net.DefaultResolver.LookupAddr(ctx, a.IP); err == nil && len(names) > 0 {
+				a.Hostname = strings.TrimSuffix(names[0], ".")
+				return
+			}
+			if name, err := netbiosName(ctx, netip.MustParseAddr(a.IP), timeout); err == nil {
+				a.Hostname = name
+			}
+		}(&assets[i])
+	}
+	wg.Wait()
 }
 
 func probe(ctx context.Context, addr netip.Addr, port int, timeout time.Duration) probeResult {

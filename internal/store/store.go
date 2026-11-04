@@ -46,6 +46,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS assets (
 	ip         TEXT PRIMARY KEY,
 	hostname   TEXT NOT NULL DEFAULT '',
+	name       TEXT NOT NULL DEFAULT '', -- 手动名称
 	probe_id   TEXT NOT NULL,
 	importance TEXT NOT NULL DEFAULT 'normal',
 	owner      TEXT NOT NULL DEFAULT '',
@@ -412,6 +413,7 @@ var addedColumns = []struct{ table, column, def string }{
 	{"nodes", "last_seen", "BIGINT NOT NULL DEFAULT 0"},
 	{"nodes", "ids_seen", "BIGINT NOT NULL DEFAULT 0"},
 	{"nodes", "health", "TEXT NOT NULL DEFAULT ''"},
+	{"assets", "name", "TEXT NOT NULL DEFAULT ''"},
 }
 
 func initSchema(db *DB) error {
@@ -678,7 +680,7 @@ func (s *Store) GetAsset(ctx context.Context, ip string) (model.Asset, error) {
 
 func (s *Store) queryAssets(ctx context.Context, where string, args ...any) ([]model.Asset, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT a.ip, a.hostname, a.probe_id, a.importance, a.owner, a.tags, a.first_seen, a.last_seen,
+		SELECT a.ip, a.hostname, a.name, a.probe_id, a.importance, a.owner, a.tags, a.first_seen, a.last_seen,
 		       p.port, p.proto, p.service, p.banner
 		FROM assets a
 		LEFT JOIN ports p ON p.ip = a.ip
@@ -695,7 +697,7 @@ func (s *Store) queryAssets(ctx context.Context, where string, args ...any) ([]m
 		var port sql.NullInt64
 		var proto, service, banner sql.NullString
 		var tags string
-		if err := rows.Scan(&a.IP, &a.Hostname, &a.ProbeID, &a.Importance, &a.Owner, &tags, &a.FirstSeen, &a.LastSeen,
+		if err := rows.Scan(&a.IP, &a.Hostname, &a.Name, &a.ProbeID, &a.Importance, &a.Owner, &tags, &a.FirstSeen, &a.LastSeen,
 			&port, &proto, &service, &banner); err != nil {
 			return nil, err
 		}
@@ -729,5 +731,36 @@ func (s *Store) queryAssets(ctx context.Context, where string, args ...any) ([]m
 	if err := s.annotateGroups(ctx, assets); err != nil {
 		return nil, err
 	}
+	if err := s.annotateAgentHostnames(ctx, assets); err != nil {
+		return nil, err
+	}
 	return assets, nil
+}
+
+// annotateAgentHostnames 填写资产地址上 Agent 上报的主机名（一台主机可能有多个地址）。
+func (s *Store) annotateAgentHostnames(ctx context.Context, assets []model.Asset) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT hostname, ips FROM agents WHERE hostname <> ''`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byIP := map[string]string{}
+	for rows.Next() {
+		var hostname, ips string
+		if err := rows.Scan(&hostname, &ips); err != nil {
+			return err
+		}
+		var list []string
+		_ = json.Unmarshal([]byte(ips), &list)
+		for _, ip := range list {
+			byIP[ip] = hostname
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range assets {
+		assets[i].AgentHostname = byIP[assets[i].IP]
+	}
+	return nil
 }

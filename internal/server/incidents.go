@@ -145,6 +145,7 @@ func (s *Server) addIncidentNote(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) setAssetMeta(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		Name       string   `json:"name"`
 		Importance string   `json:"importance"`
 		Owner      string   `json:"owner"`
 		Tags       []string `json:"tags"`
@@ -165,11 +166,12 @@ func (s *Server) setAssetMeta(w http.ResponseWriter, r *http.Request) {
 			tags = append(tags, t)
 		}
 	}
-	if len(req.Owner) > 64 || len(tags) > 20 {
-		writeError(w, http.StatusBadRequest, "owner or tags too long")
+	req.Name = strings.TrimSpace(req.Name)
+	if len(req.Name) > 64 || len(req.Owner) > 64 || len(tags) > 20 {
+		writeError(w, http.StatusBadRequest, "name, owner or tags too long")
 		return
 	}
-	err := s.store.SetAssetMeta(r.Context(), r.PathValue("ip"), req.Importance, strings.TrimSpace(req.Owner), tags)
+	err := s.store.SetAssetMeta(r.Context(), r.PathValue("ip"), req.Name, req.Importance, strings.TrimSpace(req.Owner), tags)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "asset not found")
 		return
