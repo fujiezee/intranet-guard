@@ -8,6 +8,7 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
+	"time"
 
 	"safe/internal/alert"
 	"safe/internal/honeypot"
@@ -90,8 +91,9 @@ func (s *Server) listHoneypotEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 type probeConfigRequest struct {
-	IPs    []string       `json:"ips"`
-	Status map[int]string `json:"status"`
+	IPs     []string       `json:"ips"`
+	Status  map[int]string `json:"status"`
+	EveIdle *int64         `json:"eve_idle,omitempty"` // 距上次从 eve.json 读到新内容的秒数；未启用 -eve 或旧版探针不发
 }
 
 type probeConfigResponse struct {
@@ -114,6 +116,12 @@ func (s *Server) probeConfig(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeInternal(w, err)
 		return
+	}
+	if req.EveIdle != nil && *req.EveIdle >= 0 {
+		if err := s.store.ReportEve(r.Context(), probeID, time.Now().Add(-time.Duration(*req.EveIdle)*time.Second)); err != nil {
+			writeInternal(w, err)
+			return
+		}
 	}
 	resp := probeConfigResponse{Honeypot: cfg}
 	if resp.IntelVersion, err = s.store.IntelVersion(r.Context()); err != nil {

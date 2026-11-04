@@ -64,12 +64,6 @@ func (s *Store) SaveIDSReport(ctx context.Context, rep model.IDSReport) error {
 			}
 		}
 	}
-	if len(rep.Events) > 0 {
-		if _, err := tx.ExecContext(ctx, `UPDATE nodes SET ids_seen = ? WHERE kind = ? AND id = ?`,
-			now.UnixMilli(), model.NodeProbe, rep.ProbeID); err != nil {
-			return err
-		}
-	}
 	return tx.Commit()
 }
 
