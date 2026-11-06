@@ -19,7 +19,7 @@ import { lang, setLang, t } from '../i18n'
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api } from '../api'
-import { setSession } from '../auth'
+import { auth, setSession } from '../auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -32,8 +32,9 @@ async function submit() {
     const resp = await api.login(form.username, form.password)
     setSession(resp.token, resp.user)
     const redirect = route.query.redirect
-    // 只允许站内跳转，防止开放重定向。
-    router.push(typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/')
+    // 只允许站内跳转，防止开放重定向。管理员（值守人员）默认进入值守工作台，只读用户进入总览。
+    const home = auth.isAdmin ? '/duty' : '/'
+    router.push(typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : home)
   } catch {
     // 错误提示已由 api 层弹出
   } finally {

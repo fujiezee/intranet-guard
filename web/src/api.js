@@ -27,6 +27,8 @@ const messages = {
   'reason is required (at most 500 characters)': '请填写处置原因',
   'only completed block / quarantine / isolate actions can be rolled back, once': '只有已完成的封禁、隔离文件、隔离主机可以撤销，且只能撤销一次',
   'no running honeypot: enable a honeypot on a probe first': '没有运行中的蜜罐：请先在“蜜罐”页为探针启用蜜罐',
+  'SLA limits must be 0-43200 minutes': 'SLA 时限需在 0～43200 分钟（30 天）之间',
+  'note is too long (at most 2000 characters)': '备注最多 2000 个字符',
 }
 
 async function request(method, path, body) {
@@ -112,6 +114,16 @@ export const api = {
   setChannelEnabled: (id, enabled) => request('POST', `/notify-channels/${id}/enabled`, { enabled }),
   testChannel: (id) => request('POST', `/notify-channels/${id}/test`),
   deleteChannel: (id) => request('DELETE', `/notify-channels/${id}`),
+  setChannelReports: (id, daily_report, weekly_report) => request('PUT', `/notify-channels/${id}/reports`, { daily_report, weekly_report }),
+  dutyQueue: () => request('GET', '/duty/queue'),
+  dutyMetrics: (range) => request('GET', `/duty/metrics?range=${range}`),
+  sla: () => request('GET', '/duty/sla'),
+  setSLA: (sla) => request('PUT', '/duty/sla', sla),
+  handovers: () => request('GET', '/duty/handovers'),
+  previewHandover: () => request('GET', '/duty/handovers/preview'),
+  createHandover: (note) => request('POST', '/duty/handovers', { note }),
+  reports: (kind = '') => request('GET', `/reports${kind ? `?kind=${kind}` : ''}`),
+  report: (id) => request('GET', `/reports/${id}`),
   audit: (filter) => request('GET', `/audit?${new URLSearchParams(filter)}`),
   users: () => request('GET', '/users'),
   createUser: (user) => request('POST', '/users', user),

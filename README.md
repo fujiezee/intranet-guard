@@ -192,7 +192,9 @@ curl -H "Authorization: Bearer $TOKEN" localhost:8080/api/v1/stats
 | `POST /tasks`、`POST /alerts/{id}/ack`、`/users` 增删查 | admin |
 | `GET /vulns?status=&severity=&ip=` | viewer |
 | `POST /vulns/{id}/status`（ignored / open） | admin |
-| `GET /audit`、`/notify-channels` 增删查、`POST /notify-channels/{id}/test` | admin |
+| `GET /audit`、`/notify-channels` 增删查、`POST /notify-channels/{id}/test`、`PUT /notify-channels/{id}/reports` | admin |
+| `GET /duty/queue`、`/duty/metrics?range=today\|7d\|30d`、`/duty/sla`、`/duty/handovers`、`/reports?kind=`、`/reports/{id}` | viewer |
+| `PUT /duty/sla`、`GET /duty/handovers/preview`、`POST /duty/handovers` | admin |
 | `GET /agents`、`GET /host-events?agent_id=&type=&src_ip=` | viewer |
 | `GET /ids/events?src_ip=&dest_ip=&signature_id=&max_severity=`、`GET /ids/suppressions` | viewer |
 | `POST /ids/suppressions`、`DELETE /ids/suppressions/{id}` | admin |

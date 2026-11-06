@@ -5,6 +5,8 @@
       <div class="logo">{{ t('内网防护系统') }}</div>
       <el-menu :default-active="route.path" router background-color="#1f2d3d" text-color="#bfcbd9" active-text-color="#409eff">
         <el-menu-item index="/">{{ t('总览') }}</el-menu-item>
+        <el-menu-item index="/duty">{{ t('值守工作台') }}</el-menu-item>
+        <el-menu-item index="/reports">{{ t('报表') }}</el-menu-item>
         <el-menu-item index="/assets">{{ t('资产') }}</el-menu-item>
         <el-menu-item index="/incidents">{{ t('事件') }}</el-menu-item>
         <el-menu-item index="/alerts">{{ t('告警') }}</el-menu-item>
