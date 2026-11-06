@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS alerts (
 	incident_id     INTEGER NOT NULL DEFAULT 0,
 	notified        BOOLEAN NOT NULL DEFAULT TRUE, -- 新告警写入时为 FALSE，推送后置为 TRUE
 	notify_claimed_at TIMESTAMP,                   -- 推送领取时间（租约），见 ClaimPendingAlerts
+	acked_at   TIMESTAMP,                          -- 值守人员确认时间（SLA 统计），系统自动关闭时为空
 	created_at TIMESTAMP NOT NULL,
 	updated_at TIMESTAMP NOT NULL
 );
@@ -202,7 +203,9 @@ CREATE TABLE IF NOT EXISTS notify_channels (
 	enabled      BOOLEAN NOT NULL,
 	last_error   TEXT NOT NULL DEFAULT '',
 	last_sent_at TIMESTAMP,
-	created_at   TIMESTAMP NOT NULL
+	created_at   TIMESTAMP NOT NULL,
+	daily_report  BOOLEAN NOT NULL DEFAULT FALSE,
+	weekly_report BOOLEAN NOT NULL DEFAULT FALSE
 );
 -- 告警推送进度：只有一行，多实例部署时通过比较并交换保证每条告警只推送一次
 CREATE TABLE IF NOT EXISTS notify_cursor (
@@ -287,9 +290,32 @@ CREATE TABLE IF NOT EXISTS incidents (
 	first_seen  TIMESTAMP NOT NULL,
 	last_seen   TIMESTAMP NOT NULL,
 	created_at  TIMESTAMP NOT NULL,
-	updated_at  TIMESTAMP NOT NULL
+	updated_at  TIMESTAMP NOT NULL,
+	acked_at    TIMESTAMP, -- 首次认领时间
+	resolved_at TIMESTAMP  -- 结案时间
 );
 CREATE INDEX IF NOT EXISTS incidents_ip ON incidents(ip, status, last_seen);
+CREATE INDEX IF NOT EXISTS incidents_created ON incidents(created_at);
+-- 交接班记录：summary 为交接时自动汇总的 JSON（见 store.HandoverSummary）
+CREATE TABLE IF NOT EXISTS handovers (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	author     TEXT NOT NULL,
+	from_at    TIMESTAMP NOT NULL,
+	to_at      TIMESTAMP NOT NULL,
+	summary    TEXT NOT NULL,
+	note       TEXT NOT NULL DEFAULT '',
+	created_at TIMESTAMP NOT NULL
+);
+-- 日报 / 周报：同一周期只生成一份，多实例并发时由唯一约束保证
+CREATE TABLE IF NOT EXISTS reports (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	kind         TEXT NOT NULL,
+	period_start TIMESTAMP NOT NULL,
+	period_end   TIMESTAMP NOT NULL,
+	data         TEXT NOT NULL,
+	created_at   TIMESTAMP NOT NULL,
+	UNIQUE (kind, period_start)
+);
 CREATE TABLE IF NOT EXISTS incident_notes (
 	id          INTEGER PRIMARY KEY AUTOINCREMENT,
 	incident_id INTEGER NOT NULL,
@@ -414,6 +440,11 @@ var addedColumns = []struct{ table, column, def string }{
 	{"nodes", "ids_seen", "BIGINT NOT NULL DEFAULT 0"},
 	{"nodes", "health", "TEXT NOT NULL DEFAULT ''"},
 	{"assets", "name", "TEXT NOT NULL DEFAULT ''"},
+	{"alerts", "acked_at", "TIMESTAMP"},
+	{"incidents", "acked_at", "TIMESTAMP"},
+	{"incidents", "resolved_at", "TIMESTAMP"},
+	{"notify_channels", "daily_report", "BOOLEAN NOT NULL DEFAULT FALSE"},
+	{"notify_channels", "weekly_report", "BOOLEAN NOT NULL DEFAULT FALSE"},
 }
 
 func initSchema(db *DB) error {
@@ -437,8 +468,15 @@ func initSchema(db *DB) error {
 		}
 	}
 	// 依赖补加列的索引，必须在补列之后创建
-	_, err := db.Exec(`CREATE INDEX IF NOT EXISTS alerts_unnotified ON alerts(id) WHERE NOT notified`)
-	return err
+	for _, q := range []string{
+		`CREATE INDEX IF NOT EXISTS alerts_unnotified ON alerts(id) WHERE NOT notified`,
+		`CREATE INDEX IF NOT EXISTS alerts_created ON alerts(created_at)`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Close 先写完事件存储中尚在批处理的事件（ClickHouse），再关闭主库。

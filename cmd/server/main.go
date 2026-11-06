@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"safe/internal/chstore"
+	"safe/internal/duty"
 	"safe/internal/model"
 	"safe/internal/node"
 	"safe/internal/notify"
@@ -209,6 +210,7 @@ func main() {
 	go maintenance(ctx, st, handler, *taskTimeout, leader.IsLeader)
 	go cfg.Updates.Run(ctx)
 	go notify.Run(ctx, st, 10*time.Second, leader.IsLeader)
+	go duty.Run(ctx, st, leader.IsLeader)
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

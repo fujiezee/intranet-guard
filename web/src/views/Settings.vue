@@ -4,7 +4,7 @@
     <el-tabs v-model="tab" @tab-change="onTab">
       <el-tab-pane :label="t('告警推送')" name="channels">
         <div class="bar">
-          <span class="hint">{{ t('新告警每 10 秒推送一次，同一批告警合并为一条消息。') }}</span>
+          <span class="hint">{{ t('新告警每 10 秒推送一次，同一批告警合并为一条消息。日报每天 9:00、周报每周一 9:00 推送到勾选的渠道，交接班推送到所有启用的渠道。') }}</span>
           <el-button type="primary" @click="openDialog">{{ t('添加渠道') }}</el-button>
         </div>
         <el-table :data="channels" size="small" stripe :empty-text="t('还没有推送渠道，告警只能在控制台查看')">
@@ -17,6 +17,12 @@
               <span v-if="row.last_error" class="err">{{ t('失败：{p0}', { p0: row.last_error }) }}</span>
               <span v-else-if="row.last_sent_at" class="ok">{{ t('{p0} 发送成功', { p0: formatTime(row.last_sent_at) }) }}</span>
               <span v-else class="sub">{{ t('尚未发送') }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('报表')" width="140">
+            <template #default="{ row }">
+              <el-checkbox :model-value="row.daily_report" size="small" @change="(v) => setReports(row, v, row.weekly_report)">{{ t('日报') }}</el-checkbox>
+              <el-checkbox :model-value="row.weekly_report" size="small" @change="(v) => setReports(row, row.daily_report, v)">{{ t('周报') }}</el-checkbox>
             </template>
           </el-table-column>
           <el-table-column :label="t('启用')" width="70">
@@ -115,6 +121,9 @@ const actionLabels = {
   'notify_channel.create': t('添加推送渠道'),
   'notify_channel.delete': t('删除推送渠道'),
   'notify_channel.enabled': t('启停推送渠道'),
+  'notify_channel.reports': t('设置报表推送'),
+  'duty.handover': t('交接班'),
+  'duty.sla': t('修改 SLA'),
 }
 
 const tab = ref('channels')
@@ -151,6 +160,11 @@ async function submit() {
 
 async function toggle(row, enabled) {
   await api.setChannelEnabled(row.id, enabled)
+  loadChannels()
+}
+
+async function setReports(row, daily, weekly) {
+  await api.setChannelReports(row.id, daily, weekly)
   loadChannels()
 }
 

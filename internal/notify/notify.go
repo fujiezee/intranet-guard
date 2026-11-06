@@ -64,9 +64,15 @@ func format(alerts []model.Alert) (title, text string) {
 	return title, b.String()
 }
 
-// Send 按渠道类型构造消息并发送。
+// Send 按渠道类型构造告警消息并发送。
 func Send(ctx context.Context, hc *http.Client, ch model.NotifyChannel, alerts []model.Alert) error {
 	title, text := format(alerts)
+	return SendMessage(ctx, hc, ch, title, text, map[string]any{"title": title, "alerts": alerts})
+}
+
+// SendMessage 发送一条 Markdown 文本消息（交接班、日报 / 周报）。通用 Webhook 收到的是 webhook 本身（JSON），
+// 群机器人收到的是 text：企业微信、钉钉按 Markdown 显示，飞书按纯文本显示。
+func SendMessage(ctx context.Context, hc *http.Client, ch model.NotifyChannel, title, text string, webhook any) error {
 	target := ch.URL
 	var body any
 	switch ch.Type {
@@ -93,7 +99,7 @@ func Send(ctx context.Context, hc *http.Client, ch model.NotifyChannel, alerts [
 		}
 		body = m
 	case model.ChannelWebhook:
-		body = map[string]any{"title": title, "alerts": alerts}
+		body = webhook
 	default:
 		return fmt.Errorf("unknown channel type %q", ch.Type)
 	}

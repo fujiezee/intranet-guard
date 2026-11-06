@@ -60,7 +60,7 @@ func insertAlertRow(ctx context.Context, tx *Tx, a model.Alert, dedupKey string,
 // ListAlerts 返回最近的告警；status 为空时返回全部状态。
 func (s *Store) ListAlerts(ctx context.Context, status model.AlertStatus, limit int) ([]model.Alert, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, type, severity, ip, port, message, status, acked_by, resolution, resolution_note, incident_id, created_at, updated_at
+		SELECT id, type, severity, ip, port, message, status, acked_by, resolution, resolution_note, incident_id, created_at, updated_at, acked_at
 		FROM alerts WHERE ? = '' OR status = ?
 		ORDER BY id DESC LIMIT ?`, status, status, limit)
 	if err != nil {
@@ -70,24 +70,29 @@ func (s *Store) ListAlerts(ctx context.Context, status model.AlertStatus, limit 
 	alerts := []model.Alert{}
 	for rows.Next() {
 		var a model.Alert
+		var acked sql.NullTime
 		if err := rows.Scan(&a.ID, &a.Type, &a.Severity, &a.IP, &a.Port, &a.Message, &a.Status,
-			&a.AckedBy, &a.Resolution, &a.ResolutionNote, &a.IncidentID, &a.CreatedAt, &a.UpdatedAt); err != nil {
+			&a.AckedBy, &a.Resolution, &a.ResolutionNote, &a.IncidentID, &a.CreatedAt, &a.UpdatedAt, &acked); err != nil {
 			return nil, err
 		}
+		a.AckedAt = timePtr(acked)
 		alerts = append(alerts, a)
 	}
 	return alerts, rows.Err()
 }
 
 // AckAlert 确认告警；falsePositive 为 true 时记为误报及原因，用于统计误报率和调优规则。
+// 首次确认的时间记入 acked_at，用于响应时长和 SLA 统计。
 func (s *Store) AckAlert(ctx context.Context, id int64, by string, falsePositive bool, note string) error {
 	resolution := ""
 	if falsePositive {
 		resolution = model.ResolutionFalsePositive
 	}
+	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE alerts SET status = ?, acked_by = ?, resolution = ?, resolution_note = ?, updated_at = ? WHERE id = ?`,
-		model.AlertAcked, by, resolution, note, time.Now().UTC(), id)
+		UPDATE alerts SET status = ?, acked_by = ?, resolution = ?, resolution_note = ?, updated_at = ?,
+			acked_at = COALESCE(acked_at, ?) WHERE id = ?`,
+		model.AlertAcked, by, resolution, note, now, now, id)
 	if err != nil {
 		return err
 	}
@@ -95,6 +100,14 @@ func (s *Store) AckAlert(ctx context.Context, id int64, by string, falsePositive
 		return ErrNotFound
 	}
 	return nil
+}
+
+func timePtr(t sql.NullTime) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	v := t.Time.UTC()
+	return &v
 }
 
 type Stats struct {

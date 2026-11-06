@@ -38,16 +38,16 @@ func (s *Store) FailStaleTasks(ctx context.Context, cutoff time.Time) ([]string,
 func (s *Store) CreateChannel(ctx context.Context, c model.NotifyChannel) (model.NotifyChannel, error) {
 	c.CreatedAt = time.Now().UTC()
 	err := s.db.QueryRowContext(ctx, `
-		INSERT INTO notify_channels (name, type, url, secret, min_severity, enabled, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
-		c.Name, c.Type, c.URL, c.Secret, c.MinSeverity, c.Enabled, c.CreatedAt).Scan(&c.ID)
+		INSERT INTO notify_channels (name, type, url, secret, min_severity, enabled, created_at, daily_report, weekly_report)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+		c.Name, c.Type, c.URL, c.Secret, c.MinSeverity, c.Enabled, c.CreatedAt, c.DailyReport, c.WeeklyReport).Scan(&c.ID)
 	return c, err
 }
 
 // ListChannels 返回全部渠道（含完整 URL 和密钥，供推送使用；对外展示前由调用方脱敏）。
 func (s *Store) ListChannels(ctx context.Context) ([]model.NotifyChannel, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, name, type, url, secret, min_severity, enabled, last_error, last_sent_at, created_at
+		SELECT id, name, type, url, secret, min_severity, enabled, last_error, last_sent_at, created_at, daily_report, weekly_report
 		FROM notify_channels ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -58,7 +58,7 @@ func (s *Store) ListChannels(ctx context.Context) ([]model.NotifyChannel, error)
 		var c model.NotifyChannel
 		var sent sql.NullTime
 		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.URL, &c.Secret, &c.MinSeverity, &c.Enabled,
-			&c.LastError, &sent, &c.CreatedAt); err != nil {
+			&c.LastError, &sent, &c.CreatedAt, &c.DailyReport, &c.WeeklyReport); err != nil {
 			return nil, err
 		}
 		if sent.Valid {
@@ -84,6 +84,11 @@ func (s *Store) GetChannel(ctx context.Context, id int64) (model.NotifyChannel, 
 
 func (s *Store) SetChannelEnabled(ctx context.Context, id int64, enabled bool) error {
 	return s.execOne(ctx, `UPDATE notify_channels SET enabled = ? WHERE id = ?`, enabled, id)
+}
+
+// SetChannelReports 设置渠道是否接收日报、周报。
+func (s *Store) SetChannelReports(ctx context.Context, id int64, daily, weekly bool) error {
+	return s.execOne(ctx, `UPDATE notify_channels SET daily_report = ?, weekly_report = ? WHERE id = ?`, daily, weekly, id)
 }
 
 func (s *Store) DeleteChannel(ctx context.Context, id int64) error {

@@ -117,6 +117,8 @@ type Alert struct {
 	ResolutionNote string    `json:"resolution_note,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+	// AckedAt 是值守人员确认的时间，用于响应时长和 SLA 统计；系统自动关闭的告警为空
+	AckedAt *time.Time `json:"acked_at,omitempty"`
 }
 
 type HostEventType string
@@ -326,16 +328,18 @@ const (
 
 // NotifyChannel 是告警推送渠道。URL 和 Secret 只在创建时提交，列表接口返回脱敏后的 URL。
 type NotifyChannel struct {
-	ID          int64       `json:"id"`
-	Name        string      `json:"name"`
-	Type        ChannelType `json:"type"`
-	URL         string      `json:"url"`
-	Secret      string      `json:"secret,omitempty"` // 钉钉 / 飞书加签密钥
-	MinSeverity Severity    `json:"min_severity"`
-	Enabled     bool        `json:"enabled"`
-	LastError   string      `json:"last_error,omitempty"`
-	LastSentAt  *time.Time  `json:"last_sent_at,omitempty"`
-	CreatedAt   time.Time   `json:"created_at"`
+	ID           int64       `json:"id"`
+	Name         string      `json:"name"`
+	Type         ChannelType `json:"type"`
+	URL          string      `json:"url"`
+	Secret       string      `json:"secret,omitempty"` // 钉钉 / 飞书加签密钥
+	MinSeverity  Severity    `json:"min_severity"`
+	Enabled      bool        `json:"enabled"`
+	LastError    string      `json:"last_error,omitempty"`
+	LastSentAt   *time.Time  `json:"last_sent_at,omitempty"`
+	CreatedAt    time.Time   `json:"created_at"`
+	DailyReport  bool        `json:"daily_report"`  // 接收日报
+	WeeklyReport bool        `json:"weekly_report"` // 接收周报
 }
 
 // AuditEntry 记录一次管理操作。
@@ -495,6 +499,9 @@ type Incident struct {
 	LastSeen   time.Time      `json:"last_seen"`
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`
+	// AckedAt 是首次认领（指定负责人或离开"待处理"）的时间，ResolvedAt 是结案时间；用于 SLA 统计
+	AckedAt    *time.Time `json:"acked_at,omitempty"`
+	ResolvedAt *time.Time `json:"resolved_at,omitempty"`
 }
 
 type IncidentNote struct {

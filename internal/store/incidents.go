@@ -93,14 +93,16 @@ func parseStages(list string) []string {
 	return out
 }
 
-const incidentColumns = `id, ip, title, severity, status, assignee, stages, alert_count, first_seen, last_seen, created_at, updated_at`
+const incidentColumns = `id, ip, title, severity, status, assignee, stages, alert_count, first_seen, last_seen, created_at, updated_at, acked_at, resolved_at`
 
 func scanIncident(row interface{ Scan(...any) error }) (model.Incident, error) {
 	var in model.Incident
 	var stages string
+	var acked, resolved sql.NullTime
 	err := row.Scan(&in.ID, &in.IP, &in.Title, &in.Severity, &in.Status, &in.Assignee, &stages, &in.AlertCount,
-		&in.FirstSeen, &in.LastSeen, &in.CreatedAt, &in.UpdatedAt)
+		&in.FirstSeen, &in.LastSeen, &in.CreatedAt, &in.UpdatedAt, &acked, &resolved)
 	in.Stages = parseStages(stages)
+	in.AckedAt, in.ResolvedAt = timePtr(acked), timePtr(resolved)
 	return in, err
 }
 
@@ -152,6 +154,7 @@ func (s *Store) IncidentAlerts(ctx context.Context, id int64) ([]model.Alert, er
 }
 
 // UpdateIncident 修改状态或负责人（空字符串表示不修改）。结案时一并确认其下未处理的告警。
+// 首次指定负责人或离开"待处理"即为认领，记入 acked_at；结案记入 resolved_at，重新打开时清空。
 func (s *Store) UpdateIncident(ctx context.Context, id int64, status model.IncidentStatus, assignee *string, by string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -159,25 +162,34 @@ func (s *Store) UpdateIncident(ctx context.Context, id int64, status model.Incid
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC()
+	claimed := deref(assignee) != "" || (status != "" && status != model.IncidentOpen)
+	closed := status == model.IncidentResolved || status == model.IncidentFalsePositive
 	res, err := tx.ExecContext(ctx, `
 		UPDATE incidents SET status = CASE WHEN ? = '' THEN status ELSE ? END,
-			assignee = CASE WHEN ? THEN ? ELSE assignee END, updated_at = ? WHERE id = ?`,
-		status, status, assignee != nil, deref(assignee), now, id)
+			assignee = CASE WHEN ? THEN ? ELSE assignee END, updated_at = ?,
+			acked_at = CASE WHEN ? AND acked_at IS NULL THEN ? ELSE acked_at END,
+			resolved_at = CASE WHEN ? THEN COALESCE(resolved_at, ?) WHEN ? <> '' THEN NULL ELSE resolved_at END
+		WHERE id = ?`,
+		status, status, assignee != nil, deref(assignee), now,
+		claimed, now,
+		closed, now, status,
+		id)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
-	if status == model.IncidentResolved || status == model.IncidentFalsePositive {
+	if closed {
 		resolution := ""
 		if status == model.IncidentFalsePositive {
 			resolution = model.ResolutionFalsePositive
 		}
 		if _, err := tx.ExecContext(ctx, `
-			UPDATE alerts SET status = ?, acked_by = ?, resolution = CASE WHEN ? = '' THEN resolution ELSE ? END, updated_at = ?
+			UPDATE alerts SET status = ?, acked_by = ?, resolution = CASE WHEN ? = '' THEN resolution ELSE ? END, updated_at = ?,
+				acked_at = COALESCE(acked_at, ?)
 			WHERE incident_id = ? AND status = ?`,
-			model.AlertAcked, by, resolution, resolution, now, id, model.AlertOpen); err != nil {
+			model.AlertAcked, by, resolution, resolution, now, now, id, model.AlertOpen); err != nil {
 			return err
 		}
 	}

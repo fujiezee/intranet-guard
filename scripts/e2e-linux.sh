@@ -92,6 +92,15 @@ sleep 5
 wait_for "蜜罐告警归入来源主机的事件（侦察探测阶段）" 10 \
 	"api GET /incidents | json '[i for i in d if i[\"ip\"]==\"127.0.0.2\" and \"discovery\" in i[\"stages\"]][0]'"
 
+step "值守工作台与报表"
+INC=$(api GET /duty/queue | json '[i for i in d if i["kind"]=="incident" and i["ip"]=="127.0.0.2"][0]["id"]')
+[ -n "$INC" ] && ok "蜜罐事件进入待办队列（带响应时限）" || fail "待办队列中没有蜜罐事件"
+api PATCH "/incidents/$INC" '{"assignee":"admin","status":"investigating"}' >/dev/null
+api GET /duty/queue | json "[i for i in d if i['id']==$INC and i['kind']=='incident'][0]['acked_at']" >/dev/null && ok "认领后记录响应时间" || fail "认领没有记录响应时间"
+[ "$(api GET '/duty/metrics?range=today' | json 'd["mtta_samples"] >= 1')" = True ] && ok "平均响应时长计入认领" || fail "平均响应时长没有计入认领"
+[ "$(api POST /duty/handovers '{"note":"e2e"}' | json 'd["summary"]["open_total"] >= 1')" = True ] && ok "交接班汇总遗留待办" || fail "交接班没有汇总遗留待办"
+wait_for "启动后生成最近一份日报和周报" 70 "api GET /reports | json 'len({r[\"kind\"] for r in d}) == 2 or exit(1)'"
+
 step "威胁情报与外联分析（合成的 Suricata 记录）"
 EVE=/var/log/suricata/eve.json
 ts() { date -u -d "@$1" +%Y-%m-%dT%H:%M:%S.000000+0000; }

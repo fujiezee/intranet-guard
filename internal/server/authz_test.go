@@ -41,6 +41,12 @@ var viewerRoutes = map[string]bool{
 	"GET /api/v1/host-events":      true,
 	"GET /api/v1/ids/events":       true,
 	"GET /api/v1/ids/suppressions": true,
+	"GET /api/v1/duty/queue":       true,
+	"GET /api/v1/duty/metrics":     true,
+	"GET /api/v1/duty/sla":         true,
+	"GET /api/v1/duty/handovers":   true,
+	"GET /api/v1/reports":          true,
+	"GET /api/v1/reports/{id}":     true,
 }
 
 var routeRe = regexp.MustCompile(`s\.mux\.(Handle|HandleFunc)\("([A-Z]+ /api/[^"]+)",\s*(\w+)?`)

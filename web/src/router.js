@@ -6,6 +6,8 @@ const router = createRouter({
   routes: [
     { path: '/login', name: 'login', component: () => import('./views/Login.vue'), meta: { public: true } },
     { path: '/', name: 'dashboard', component: () => import('./views/Dashboard.vue') },
+    { path: '/duty', name: 'duty', component: () => import('./views/Duty.vue') },
+    { path: '/reports', name: 'reports', component: () => import('./views/Reports.vue') },
     { path: '/assets', name: 'assets', component: () => import('./views/Assets.vue') },
     { path: '/incidents', name: 'incidents', component: () => import('./views/Incidents.vue') },
     { path: '/vulns', name: 'vulns', component: () => import('./views/Vulns.vue') },
