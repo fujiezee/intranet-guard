@@ -41,7 +41,9 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item :label="t('探针 ID')" required>
-          <el-input v-model="form.probe_id" :placeholder="t('如 seg-a，与探针启动参数 -id 一致')" />
+          <el-select v-model="form.probe_id" filterable allow-create default-first-option :placeholder="t('选择或输入探针 ID')" style="width: 100%">
+            <el-option v-for="p in probes" :key="p" :label="p" :value="p" />
+          </el-select>
         </el-form-item>
         <el-form-item :label="t('扫描目标')" required>
           <el-input v-model="form.targets" type="textarea" :rows="4" :placeholder="t('每行一个：10.1.0.5、10.1.0.0/24、10.1.1.10-50；单任务最大 /16')" />
@@ -70,7 +72,7 @@
 
 <script setup>
 import { t } from '../i18n'
-import { onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
 import { auth } from '../auth'
@@ -88,6 +90,8 @@ const loading = ref(false)
 const dialog = ref(false)
 const submitting = ref(false)
 const form = reactive({ kind: 'discovery', probe_id: '', targets: '', ports: '', baseline: false, weak_password: false })
+const nodes = ref([])
+const probes = computed(() => nodes.value.filter((n) => n.kind === 'probe' && n.status === 'active').map((n) => n.id))
 
 async function load() {
   loading.value = true
@@ -98,8 +102,9 @@ async function load() {
   }
 }
 
-function openDialog() {
-  Object.assign(form, { kind: 'discovery', probe_id: '', targets: '', ports: '', baseline: false, weak_password: false })
+async function openDialog() {
+  nodes.value = await api.nodes().catch(() => [])
+  Object.assign(form, { kind: 'discovery', probe_id: probes.value[0] || '', targets: '', ports: '', baseline: false, weak_password: false })
   dialog.value = true
 }
 
@@ -107,7 +112,7 @@ async function submit() {
   const targets = form.targets.split(/[\s,]+/).filter(Boolean)
   const ports = form.ports.split(/[\s,]+/).filter(Boolean).map(Number)
   if (!form.probe_id.trim() || !targets.length) {
-    ElMessage.error(t('请填写探针 ID 和扫描目标'))
+    ElMessage.error(t('请选择探针并填写扫描目标'))
     return
   }
   if (ports.some((p) => !Number.isInteger(p) || p < 1 || p > 65535)) {
