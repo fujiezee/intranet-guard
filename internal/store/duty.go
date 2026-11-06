@@ -322,8 +322,10 @@ const firstShift = 12 * time.Hour
 const handoverOpenItems = 15
 
 // PreviewHandover 生成从上次交接到 now 的汇总，不保存。
+// 时间截到微秒（PostgreSQL 的精度），保存后读回的交接时间与返回值一致。
 func (s *Store) PreviewHandover(ctx context.Context, now time.Time) (Handover, error) {
-	h := Handover{From: now.Add(-firstShift).UTC(), To: now.UTC()}
+	now = now.UTC().Truncate(time.Microsecond)
+	h := Handover{From: now.Add(-firstShift), To: now}
 	if last, err := s.ListHandovers(ctx, 1); err != nil {
 		return h, err
 	} else if len(last) > 0 && last[0].To.Before(now) {
@@ -352,7 +354,7 @@ func (s *Store) CreateHandover(ctx context.Context, author, note string, now tim
 	if err != nil {
 		return h, err
 	}
-	h.Author, h.Note, h.CreatedAt = author, note, now.UTC()
+	h.Author, h.Note, h.CreatedAt = author, note, h.To
 	raw, _ := json.Marshal(h.Summary)
 	err = s.db.QueryRowContext(ctx, `
 		INSERT INTO handovers (author, from_at, to_at, summary, note, created_at) VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
